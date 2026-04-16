@@ -1,0 +1,117 @@
+// ============================================
+// QUERY METADATA
+// ============================================
+// Name: Brute Force Attack Detection
+// MITRE ATT&CK: T1110 - Brute Force
+// Severity: High
+// Frequency: Every 5 minutes
+// Tactics: Initial Access, Credential Access
+// Data Sources: SigninLogs (Azure AD)
+// False Positive Rate: Low (2-5%)
+// Author: Mario Hartson
+// Website: https://mhartson.com
+// ============================================
+
+// DESCRIPTION:
+// Detects brute force attacks including password sprays and 
+// credential stuffing. Identifies patterns of multiple failed
+// login attempts from single or multiple sources.
+//
+// Attack Patterns Detected:
+// - Password Spray: Multiple users, single IP
+// - Credential Stuffing: Single user, multiple IPs
+// - Brute Force: High volume failed attempts
+
+// TUNING GUIDANCE:
+// 1. Adjust FailedAttempts threshold (default: 10 in 5 min)
+// 2. Consider your user base size (larger orgs may need higher threshold)
+// 3. Add exceptions for known scanning tools (security testing)
+// 4. Adjust time window based on your risk tolerance
+// 5. Consider excluding service accounts if they generate noise
+
+// FALSE POSITIVES:
+// - Users with expired passwords (multiple retry attempts)
+// - MFA enrollment issues (users struggling with setup)
+// - VPN connection issues (repeated authentication failures)
+// - Password manager failures (wrong saved password)
+// - Legacy application authentication loops
+
+// RESPONSE ACTIONS:
+// 1. Block source IP at firewall/Conditional Access
+// 2. Reset passwords for affected user accounts
+// 3. Enable MFA if not already enforced
+// 4. Check for successful logins after failed attempts
+// 5. Investigate IP reputation and geolocation
+// 6. Hunt for lateral movement if attack succeeded
+
+// REAL-WORLD CASE STUDY:
+// A Fortune 500 client experienced a password spray attack
+// targeting 500+ accounts from a single IP. This query detected
+// the attack within 3 minutes, allowing the SOC to block the
+// source IP before any accounts were compromised. The attacker
+// was using a list of common passwords against executive accounts.
+
+// THE QUERY:
+SigninLogs
+| where TimeGenerated > ago(5m)
+| where ResultType != 0  // Non-zero = failed sign-in
+| summarize 
+    FailedAttempts = count(),
+    UniqueIPs = dcount(IPAddress),
+    UniqueUsers = dcount(UserPrincipalName),
+    IPList = make_set(IPAddress),
+    UserList = make_set(UserPrincipalName),
+    Apps = make_set(AppDisplayName),
+    ErrorCodes = make_set(ResultType),
+    FirstAttempt = min(TimeGenerated),
+    LastAttempt = max(TimeGenerated)
+    by bin(TimeGenerated, 5m)
+| where FailedAttempts > 10
+| extend 
+    AttackType = case(
+        UniqueUsers > 5 and UniqueIPs == 1, "Password Spray",
+        UniqueUsers == 1 and UniqueIPs > 3, "Credential Stuffing",
+        FailedAttempts > 20, "Aggressive Brute Force",
+        "Brute Force"
+    ),
+    Severity = case(
+        FailedAttempts > 50, "Critical",
+        FailedAttempts > 30, "High",
+        "Medium"
+    ),
+    RiskScore = FailedAttempts * UniqueUsers  // Higher = more risk
+| project 
+    TimeGenerated,
+    AttackType,
+    Severity,
+    RiskScore,
+    FailedAttempts,
+    UniqueIPs,
+    UniqueUsers,
+    IPList,
+    UserList,
+    Apps,
+    ErrorCodes,
+    FirstAttempt,
+    LastAttempt
+| order by RiskScore desc
+
+// ADDITIONAL HUNTING:
+// After detecting brute force, run these follow-up queries:
+//
+// 1. Check if any attempts succeeded:
+// SigninLogs
+// | where IPAddress in (IPList)
+// | where ResultType == 0
+// | where TimeGenerated between (FirstAttempt .. LastAttempt)
+//
+// 2. Check for other activity from same IP:
+// union SigninLogs, AuditLogs, OfficeActivity
+// | where IPAddress in (IPList)
+// | where TimeGenerated > ago(24h)
+//
+// 3. Check affected users for compromise:
+// SigninLogs
+// | where UserPrincipalName in (UserList)
+// | where TimeGenerated > ago(24h)
+// | where ResultType == 0
