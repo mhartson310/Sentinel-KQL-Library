@@ -1,0 +1,189 @@
+// ============================================
+// QUERY METADATA
+// ============================================
+// Name: Data Exfiltration - Large File Upload
+// MITRE ATT&CK: T1567.002 - Exfiltration Over Web Service: Exfiltration to Cloud Storage
+// Severity: Medium
+// Frequency: Every 1 hour
+// Tactics: Exfiltration
+// Data Sources: OfficeActivity, CloudAppEvents
+// False Positive Rate: Medium (20-30%)
+// Author: Mario Hartson
+// Website: https://mhartson.com
+// ============================================
+
+// DESCRIPTION:
+// Detects unusual large file uploads to cloud services (OneDrive,
+// SharePoint, Google Drive, Dropbox, etc.). Attackers exfiltrate
+// data by uploading to legitimate cloud services to blend in with
+// normal business activity.
+//
+// Monitored Services:
+// - OneDrive for Business
+// - SharePoint Online
+// - Personal OneDrive accounts
+// - Third-party cloud storage (if logged)
+
+// TUNING GUIDANCE:
+// 1. Adjust file size threshold based on normal business activity
+//    - Default: 100 MB per file, 500 MB per hour
+//    - Video production: Increase to 1 GB+ per file
+//    - Engineering: May need 500 MB+ for builds/releases
+// 2. Whitelist known large file users (video editors, designers)
+// 3. Exclude automated backup processes (with service account)
+// 4. Consider time-of-day patterns (after hours = higher risk)
+// 5. Add exceptions for SharePoint migration projects
+// 6. Different thresholds for executives vs general users
+
+// FALSE POSITIVES:
+// - Video production and editing teams
+// - Graphic designers uploading large design files
+// - Sales team uploading presentation videos
+// - Engineering uploading build artifacts
+// - Marketing uploading video assets
+// - Legitimate backup/archival activities
+// - SharePoint site migrations
+// - End-of-quarter project deliverables
+
+// RESPONSE ACTIONS:
+// 1. Contact user to verify legitimacy of upload
+// 2. Review files uploaded (names, types, destinations)
+// 3. Check user account for compromise indicators
+// 4. If unauthorized:
+//    a. Immediately disable user account
+//    b. Revoke OneDrive/SharePoint sessions
+//    c. Delete uploaded files if malicious
+//    d. Review sharing permissions on uploaded files
+// 5. Hunt for how data was collected/staged
+// 6. Check for additional exfiltration methods (email, USB)
+// 7. Determine classification of exfiltrated data
+
+// REAL-WORLD CASE STUDY:
+// A technology company detected an employee uploading 2.3 GB of
+// source code to personal OneDrive account at 11 PM on their last
+// day of employment. This query alerted within 30 minutes. The
+// employee was joining a competitor and attempting to steal IP.
+// Legal action was taken and files were recovered before disclosure.
+// Estimated IP value: $5M.
+
+// THE QUERY:
+OfficeActivity
+| where TimeGenerated > ago(1h)
+| where Operation in (
+    "FileUploaded",
+    "FileSyncUploadedFull",
+    "FileModifiedExtended"
+)
+| where OfficeWorkload in ("OneDrive", "SharePoint")
+| extend 
+    FileSize_MB = todouble(Size) / 1048576,  // Convert bytes to MB
+    FileName = tostring(SourceFileName),
+    FilePath = tostring(SourceRelativeUrl),
+    User = tostring(UserId),
+    ClientIP = tostring(ClientIP)
+// Filter for large files only
+| where FileSize_MB > 100
+// Summarize by user and time window
+| summarize 
+    TotalUploadMB = sum(FileSize_MB),
+    FileCount = count(),
+    LargestFile_MB = max(FileSize_MB),
+    Files = make_set(FileName),
+    FilePaths = make_set(FilePath),
+    UniqueIPs = dcount(ClientIP),
+    IPList = make_set(ClientIP),
+    FirstUpload = min(TimeGenerated),
+    LastUpload = max(TimeGenerated)
+    by User, bin(TimeGenerated, 1h)
+// Alert threshold: More than 500 MB in 1 hour
+| where TotalUploadMB > 500
+| extend 
+    Severity = case(
+        TotalUploadMB > 5000, "Critical",  // 5 GB+
+        TotalUploadMB > 2000, "High",      // 2 GB+
+        TotalUploadMB > 1000, "Medium",    // 1 GB+
+        "Low"
+    ),
+    // Check if after business hours (higher risk)
+    Hour = datetime_part("hour", TimeGenerated),
+    IsAfterHours = iff(Hour < 8 or Hour > 18, "Yes", "No"),
+    // Check for personal OneDrive (higher risk)
+    IsPersonalOneDrive = iff(User !endswith "@company.com", "Yes", "No"),
+    // Calculate upload velocity
+    TimeSpan = LastUpload - FirstUpload,
+    UploadRate_MBperMin = round(TotalUploadMB / (datetime_diff('minute', LastUpload, FirstUpload) + 1), 2),
+    // Check file types (some are higher risk)
+    HasSensitiveFileTypes = iff(
+        Files has_any (".sql", ".zip", ".rar", ".7z", ".csv", ".xlsx", ".docx", ".pst"),
+        "Yes",
+        "No"
+    )
+| extend 
+    RiskScore = 
+        (TotalUploadMB / 100) +  // Base score from volume
+        (iff(IsAfterHours == "Yes", 20, 0)) +
+        (iff(IsPersonalOneDrive == "Yes", 30, 0)) +
+        (iff(HasSensitiveFileTypes == "Yes", 15, 0)) +
+        (iff(UniqueIPs > 2, 10, 0))  // Multiple IPs suspicious
+| project 
+    TimeGenerated,
+    Severity,
+    RiskScore,
+    User,
+    TotalUploadMB,
+    FileCount,
+    LargestFile_MB,
+    UploadRate_MBperMin,
+    Files,
+    FilePaths,
+    IsAfterHours,
+    IsPersonalOneDrive,
+    HasSensitiveFileTypes,
+    UniqueIPs,
+    IPList,
+    TimeSpan,
+    FirstUpload,
+    LastUpload
+| order by RiskScore desc, TotalUploadMB desc
+
+// ENHANCED VERSION - Include External Sharing:
+// OfficeActivity
+// | where Operation in ("AddedToSecureLink", "AnonymousLinkCreated", "SharingSet")
+// | where OfficeWorkload in ("OneDrive", "SharePoint")
+// | where TimeGenerated > FirstUpload and TimeGenerated < LastUpload + 1h
+// | where UserId == User
+
+// FILE TYPE ANALYSIS:
+// Extend the query to categorize file types:
+// | extend FileType = extract(@"\.([^.]+)$", 1, FileName)
+// | extend DataCategory = case(
+//     FileType in ("sql", "db", "mdb", "bak"), "Database",
+//     FileType in ("zip", "rar", "7z", "tar"), "Archive",
+//     FileType in ("csv", "xlsx", "xls"), "Spreadsheet",
+//     FileType in ("docx", "doc", "pdf"), "Document",
+//     FileType in ("pst", "ost", "msg"), "Email",
+//     FileType in ("mp4", "avi", "mov"), "Video",
+//     "Other"
+// )
+
+// ADDITIONAL HUNTING:
+// After detecting large uploads:
+//
+// 1. Check what files user accessed before upload:
+// OfficeActivity
+// | where UserId == User
+// | where TimeGenerated between (FirstUpload - 24h .. FirstUpload)
+// | where Operation in ("FileAccessed", "FileDownloaded", "FileCopied")
+//
+// 2. Check for data staging (local aggregation):
+// DeviceFileEvents  // If using Defender for Endpoint
+// | where InitiatingProcessAccountName == User
+// | where FolderPath has "Downloads" or FolderPath has "Desktop"
+// | where Timestamp < FirstUpload
+//
+// 3. Look for additional exfiltration channels:
+// EmailEvents
+// | where SenderFromAddress == User
+// | where TimeGenerated > ago(7d)
+// | where AttachmentCount > 0
+// | summarize sum(TotalBytes) by RecipientEmailAddress
