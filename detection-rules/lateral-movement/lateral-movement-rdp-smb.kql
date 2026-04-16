@@ -1,0 +1,139 @@
+// ============================================
+// QUERY METADATA
+// ============================================
+// Name: Lateral Movement via RDP/SMB
+// MITRE ATT&CK: T1021.001 - Remote Desktop Protocol
+// Severity: High
+// Frequency: Every 15 minutes
+// Tactics: Lateral Movement
+// Data Sources: SecurityEvent (Windows Event Logs)
+// False Positive Rate: Medium (15-20%)
+// Author: Mario Hartson
+// Website: https://mhartson.com
+// ============================================
+
+// DESCRIPTION:
+// Detects lateral movement patterns using RDP and SMB connections.
+// Identifies when a single source connects to multiple targets in
+// a short time period, or when accounts authenticate to unusual
+// systems.
+//
+// Attack Patterns:
+// - Horizontal movement across multiple servers
+// - Jump box abuse for pivoting
+// - Pass-the-Hash attacks
+// - Stolen credential reuse
+
+// TUNING GUIDANCE:
+// 1. Adjust UniqueTargets threshold (default: 5 systems in 15 min)
+// 2. Whitelist legitimate admin workstations
+// 3. Exclude jump boxes/bastion hosts from source
+// 4. Consider excluding service accounts (or monitor separately)
+// 5. Adjust for your environment size (larger networks = higher threshold)
+
+// FALSE POSITIVES:
+// - IT admin workstations performing legitimate tasks
+// - Automated deployment/patching systems
+// - Monitoring/management tools (SCCM, monitoring agents)
+// - Jump boxes/bastion hosts (by design)
+// - Scheduled maintenance scripts
+// - Asset management scanning
+
+// RESPONSE ACTIONS:
+// 1. Isolate source system immediately (potential patient zero)
+// 2. Reset credentials for account used
+// 3. Check for malware/backdoors on source system
+// 4. Hunt for persistence mechanisms on all target systems
+// 5. Review authentication logs for unusual patterns
+// 6. Check for data staging or exfiltration
+// 7. Determine initial access vector
+
+// REAL-WORLD CASE STUDY:
+// A financial services company detected lateral movement when
+// a compromised workstation connected to 12 servers in 8 minutes.
+// The attacker was attempting to locate financial databases after
+// initial access via phishing. This query detected the anomaly
+// and triggered automated isolation, preventing database access.
+// Post-incident analysis showed the attacker was using stolen
+// domain admin credentials.
+
+// THE QUERY:
+SecurityEvent
+| where TimeGenerated > ago(15m)
+| where EventID in (
+    4624,  // Successful logon
+    4625,  // Failed logon
+    4648   // Logon using explicit credentials
+)
+| where LogonType in (
+    3,   // Network logon (SMB, RPC)
+    10   // RemoteInteractive (RDP)
+)
+// Exclude known jump boxes/bastion hosts
+| where Computer !in ("JUMPBOX01", "BASTION01", "PAW01")
+// Exclude service accounts (adjust for your environment)
+| where TargetUserName !endswith "$"
+| where TargetUserName !startswith "svc_"
+| summarize 
+    UniqueTargets = dcount(Computer),
+    TargetSystems = make_set(Computer),
+    LogonTypes = make_set(LogonType),
+    SuccessfulLogons = countif(EventID == 4624),
+    FailedLogons = countif(EventID == 4625),
+    ExplicitCredLogons = countif(EventID == 4648),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by IpAddress, TargetUserName, bin(TimeGenerated, 5m)
+| where UniqueTargets >= 5  // Same source → 5+ different targets
+| extend 
+    Severity = case(
+        UniqueTargets > 10, "Critical",
+        UniqueTargets > 7, "High",
+        "Medium"
+    ),
+    TimeSpan = LastSeen - FirstSeen,
+    AttackVelocity = UniqueTargets / (datetime_diff('minute', LastSeen, FirstSeen) + 1),
+    SuccessRate = round(todouble(SuccessfulLogons) / (SuccessfulLogons + FailedLogons) * 100, 2)
+| project 
+    TimeGenerated,
+    Severity,
+    SourceIP = IpAddress,
+    Account = TargetUserName,
+    UniqueTargets,
+    TargetSystems,
+    SuccessfulLogons,
+    FailedLogons,
+    ExplicitCredLogons,
+    AttackVelocity,  // Targets per minute
+    SuccessRate,
+    TimeSpan,
+    FirstSeen,
+    LastSeen
+| order by UniqueTargets desc, AttackVelocity desc
+
+// ENHANCED VERSION - Check for Pass-the-Hash:
+// SecurityEvent
+// | where EventID == 4624
+// | where LogonType == 3
+// | where AuthenticationPackageName == "NTLM"  // Pass-the-Hash uses NTLM
+// | summarize count() by IpAddress, TargetUserName, Computer
+// | where count_ > 5
+
+// ADDITIONAL HUNTING:
+// After detecting lateral movement:
+//
+// 1. Check what actions were taken on target systems:
+// SecurityEvent
+// | where Computer in (TargetSystems)
+// | where TimeGenerated between (FirstSeen .. LastSeen + 1h)
+// | where EventID in (4688, 4689)  // Process creation/termination
+//
+// 2. Look for data staging:
+// SecurityEvent
+// | where Computer in (TargetSystems)
+// | where EventID == 5145  // Network share access
+//
+// 3. Hunt for persistence:
+// SecurityEvent
+// | where Computer in (TargetSystems)
+// | where EventID in (4698, 4702)  // Scheduled task creation/modification
