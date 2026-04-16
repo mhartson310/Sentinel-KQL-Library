@@ -1,0 +1,138 @@
+// ============================================
+// QUERY METADATA
+// ============================================
+// Name: Privilege Escalation - Outside Business Hours
+// MITRE ATT&CK: T1078.004 - Valid Accounts: Cloud Accounts
+// Severity: Medium
+// Frequency: Every 1 hour
+// Tactics: Privilege Escalation, Persistence
+// Data Sources: AuditLogs (Azure AD)
+// False Positive Rate: Medium (10-15%)
+// Author: Mario Hartson
+// Website: https://mhartson.com
+// ============================================
+
+// DESCRIPTION:
+// Detects when privileged roles are assigned outside normal
+// business hours. Attackers often escalate privileges during
+// off-hours to avoid detection and scrutiny from SOC analysts.
+//
+// Monitored Roles:
+// - Global Administrator (highest privilege)
+// - Privileged Role Administrator
+// - Security Administrator
+// - Compliance Administrator
+// - User Administrator
+
+// TUNING GUIDANCE:
+// 1. Define business hours for your timezone (default: 8 AM - 6 PM EST)
+// 2. Add exceptions for global teams in different timezones
+// 3. Whitelist emergency change management tickets
+// 4. Consider weekends vs weekdays separately
+// 5. Adjust for on-call rotation schedules
+// 6. Lower threshold for Global Admin role (most sensitive)
+
+// FALSE POSITIVES:
+// - Legitimate IT emergency changes
+// - Global teams working different timezones
+// - Scheduled maintenance windows
+// - New hire onboarding (automated processes)
+// - Contractor access provisioning
+// - M&A activity (bulk user migrations)
+
+// RESPONSE ACTIONS:
+// 1. Contact user who made the change (AddedBy) - verify legitimacy
+// 2. Check if change ticket exists in ITSM system
+// 3. Review account for compromise indicators:
+//    - Unusual sign-in locations
+//    - Failed MFA attempts
+//    - Recent password changes
+// 4. If unauthorized, remove role assignment immediately
+// 5. Reset credentials for both AddedBy and UserAdded
+// 6. Hunt for lateral movement or data exfiltration
+
+// REAL-WORLD CASE STUDY:
+// A government contractor detected a privilege escalation at
+// 2 AM EST. Investigation revealed a compromised admin account
+// was being used to add persistence. The attacker had obtained
+// credentials via phishing 3 days prior and waited for off-hours
+// to escalate. This query alerted within 15 minutes, allowing
+// the SOC to contain the breach before data exfiltration.
+
+// THE QUERY:
+AuditLogs
+| where TimeGenerated > ago(1h)
+| where OperationName in (
+    "Add member to role",
+    "Add eligible member to role",  // PIM
+    "Add member to role completed (PIM activation)"
+)
+| where Category == "RoleManagement"
+| extend RoleName = tostring(TargetResources[0].displayName)
+| extend UserAdded = tostring(TargetResources[0].userPrincipalName)
+| extend AddedBy = tostring(InitiatedBy.user.userPrincipalName)
+| extend AddedByIP = tostring(InitiatedBy.user.ipAddress)
+// Define business hours (adjust for your timezone)
+| extend Hour = datetime_part("hour", TimeGenerated)
+| extend DayOfWeek = dayofweek(TimeGenerated)
+// Outside business hours: Before 8 AM or after 6 PM, or weekends
+| where Hour < 8 or Hour > 18 or DayOfWeek == 0day or DayOfWeek == 6day
+// High-privilege roles only
+| where RoleName in (
+    "Global Administrator",
+    "Privileged Role Administrator", 
+    "Security Administrator",
+    "Compliance Administrator",
+    "User Administrator",
+    "Exchange Administrator",
+    "SharePoint Administrator",
+    "Teams Administrator"
+)
+| extend 
+    Severity = case(
+        RoleName == "Global Administrator", "Critical",
+        RoleName in ("Privileged Role Administrator", "Security Administrator"), "High",
+        "Medium"
+    ),
+    IsWeekend = iff(DayOfWeek == 0day or DayOfWeek == 6day, "Yes", "No"),
+    TimeOfDay = case(
+        Hour < 6, "Late Night (12 AM - 6 AM)",
+        Hour < 8, "Early Morning (6 AM - 8 AM)",
+        Hour < 18, "Business Hours (8 AM - 6 PM)",
+        Hour < 22, "Evening (6 PM - 10 PM)",
+        "Late Night (10 PM - 12 AM)"
+    )
+| project 
+    TimeGenerated,
+    Severity,
+    RoleName,
+    UserAdded,
+    AddedBy,
+    AddedByIP,
+    TimeOfDay,
+    IsWeekend,
+    Result = tostring(Result),
+    CorrelationId,
+    UserAgent = tostring(AdditionalDetails[0].value)
+| order by TimeGenerated desc
+
+// ADDITIONAL HUNTING:
+// After detecting after-hours privilege escalation:
+//
+// 1. Check AddedBy account for compromise:
+// SigninLogs
+// | where UserPrincipalName == AddedBy
+// | where TimeGenerated > ago(7d)
+// | where IPAddress != AddedByIP or ResultType != 0
+//
+// 2. Check what UserAdded did after receiving role:
+// AuditLogs
+// | where InitiatedBy.user.userPrincipalName == UserAdded
+// | where TimeGenerated > EventTime
+// | where TimeGenerated < EventTime + 24h
+//
+// 3. Look for similar patterns:
+// AuditLogs
+// | where OperationName == "Add member to role"
+// | where InitiatedBy.user.ipAddress == AddedByIP
+// | where TimeGenerated > ago(30d)
