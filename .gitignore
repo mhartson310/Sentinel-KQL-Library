@@ -1,0 +1,36 @@
+# Test files
+*.test.kql
+test-*.kql
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+*.old
+
+# Personal notes
+notes.md
+TODO.md
+scratch/
+
+# Deployment configs (may contain sensitive info)
+*.tfvars
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+
+# Environment files
+.env
+.env.local
