@@ -148,4 +148,77 @@ SigninLogs
 
 ---
 
-## 📂 Repository Structure
+Place your query in the appropriate folder based on MITRE tactic.
+
+---
+
+## ❌ What We DON'T Accept
+
+- ❌ Untested queries (must be production-validated)
+- ❌ Queries copied from Microsoft docs without testing
+- ❌ Queries with >50% false positive rate (without justification)
+- ❌ Malicious queries or queries that could cause harm
+- ❌ Queries without proper documentation
+- ❌ Duplicate queries (check existing first)
+
+---
+
+## 🏆 Recognition
+
+Contributors will be:
+- Listed in query metadata (Author field)
+- Mentioned in release notes
+- Added to CONTRIBUTORS.md file
+
+Significant contributors may be invited to become maintainers.
+
+---
+
+## 📜 Code of Conduct
+
+### Our Standards
+
+- **Be respectful** - Treat all contributors with respect
+- **Be constructive** - Provide helpful feedback
+- **Be collaborative** - Work together to improve queries
+- **Be inclusive** - Welcome contributors of all skill levels
+
+### Unacceptable Behavior
+
+- Harassment or discriminatory language
+- Trolling or insulting comments
+- Personal attacks
+- Publishing others' private information
+
+---
+
+## 🔐 Security
+
+**Do NOT include:**
+- Real organization names in examples
+- Real IP addresses or credentials
+- Sensitive information from production environments
+- Customer data or PII
+
+**Sanitize examples:**
+- Use generic names: "company.com", "user@domain.com"
+- Use RFC 1918 private IPs: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+- Remove any identifying information
+
+---
+
+## 📞 Questions?
+
+- 💬 Open a GitHub Discussion
+- 📧 Email: mario@hartsonadvisory.com
+- 🌐 Visit: https://mhartson.com
+
+---
+
+## 📄 License
+
+By contributing, you agree that your contributions will be licensed under the MIT License.
+
+---
+
+**Thank you for helping improve security operations for everyone!** 🛡️
