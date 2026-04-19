@@ -1,0 +1,37 @@
+// ============================================
+// Name: Privileged Account Activity After Hours
+// MITRE ATT&CK: T1078.004 - Valid Accounts: Cloud
+// Severity: Medium
+// Frequency: Every hour
+// ============================================
+
+let PrivilegedRoles = dynamic([
+    "Global Administrator",
+    "Privileged Role Administrator",
+    "Security Administrator",
+    "User Administrator",
+    "Exchange Administrator"
+]);
+
+let PrivilegedUsers = 
+    IdentityInfo
+    | where AssignedRoles has_any (PrivilegedRoles)
+    | distinct AccountUPN;
+
+SigninLogs
+| where TimeGenerated > ago(24h)
+| where ResultType == 0
+| where UserPrincipalName in (PrivilegedUsers)
+| extend Hour = datetime_part("hour", TimeGenerated)
+| extend DayOfWeek = dayofweek(TimeGenerated)
+| where Hour < 7 or Hour > 19 or DayOfWeek in (0d, 6d)  // After hours or weekend
+| project 
+    TimeGenerated,
+    UserPrincipalName,
+    IPAddress,
+    Location = tostring(LocationDetails.city),
+    Country = tostring(LocationDetails.countryOrRegion),
+    AppDisplayName,
+    Hour,
+    IsWeekend = DayOfWeek in (0d, 6d)
+| order by TimeGenerated desc
