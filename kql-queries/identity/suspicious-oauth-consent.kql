@@ -1,0 +1,55 @@
+// ============================================
+// Name: Suspicious OAuth Application Consent
+// MITRE ATT&CK: T1528 - Steal Application Access Token
+// Severity: Critical
+// Frequency: Every 15 minutes
+// ============================================
+
+// DESCRIPTION:
+// Detects users granting consent to potentially malicious OAuth apps.
+// Common technique in modern phishing attacks.
+
+AuditLogs
+| where TimeGenerated > ago(1h)
+| where OperationName in ("Consent to application", "Add OAuth2PermissionGrant")
+| extend 
+    User = tostring(InitiatedBy.user.userPrincipalName),
+    AppName = tostring(TargetResources[0].displayName),
+    AppId = tostring(TargetResources[0].id),
+    Permissions = tostring(TargetResources[0].modifiedProperties[0].newValue)
+| extend 
+    // Flag high-risk permission patterns
+    HighRiskPermissions = case(
+        Permissions contains "Mail.Read" or 
+        Permissions contains "Mail.ReadWrite", "Email Access",
+        Permissions contains "Files.ReadWrite" or 
+        Permissions contains "Sites.ReadWrite", "File Access",
+        Permissions contains "User.ReadBasic.All" or
+        Permissions contains "Directory.Read.All", "Directory Enumeration",
+        Permissions contains "full_access", "Full Access",
+        "Normal"
+    )
+| where HighRiskPermissions != "Normal"
+| extend 
+    Severity = case(
+        HighRiskPermissions == "Full Access", "Critical",
+        HighRiskPermissions in ("Email Access", "File Access"), "High",
+        "Medium"
+    )
+| project 
+    TimeGenerated,
+    User,
+    AppName,
+    AppId,
+    HighRiskPermissions,
+    Severity,
+    Permissions,
+    IPAddress = tostring(InitiatedBy.user.ipAddress)
+| order by TimeGenerated desc
+
+// RESPONSE ACTIONS:
+// 1. Verify legitimacy of OAuth app with user
+// 2. If suspicious: revoke consent immediately
+// 3. Review app publisher and certification status
+// 4. Hunt for other users who granted same app access
+// 5. Enable admin consent workflow to prevent future incidents
