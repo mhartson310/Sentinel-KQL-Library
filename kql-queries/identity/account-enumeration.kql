@@ -1,0 +1,25 @@
+// ============================================
+// Name: Account Enumeration Detection
+// MITRE ATT&CK: T1087 - Account Discovery
+// Severity: Medium
+// Frequency: Every 30 minutes
+// ============================================
+
+SigninLogs
+| where TimeGenerated > ago(1h)
+| where ResultType in (50126, 50053, 50055, 50057)  // User not found, account locked, etc.
+| summarize 
+    UniqueUsernames = dcount(UserPrincipalName),
+    AttemptedUsernames = make_set(UserPrincipalName, 100),
+    AttemptCount = count()
+    by IPAddress, bin(TimeGenerated, 10m)
+| where UniqueUsernames >= 20  // Trying many usernames
+| extend Severity = iff(UniqueUsernames > 50, "High", "Medium")
+| project 
+    TimeGenerated,
+    IPAddress,
+    UniqueUsernames,
+    AttemptCount,
+    AttemptedUsernames,
+    Severity
+| order by UniqueUsernames desc
