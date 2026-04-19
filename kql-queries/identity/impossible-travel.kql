@@ -1,0 +1,91 @@
+// ============================================
+// QUERY METADATA
+// ============================================
+// Name: Impossible Travel Detection
+// MITRE ATT&CK: T1078 - Valid Accounts
+// Severity: High
+// Frequency: Every 15 minutes
+// Tactics: Initial Access, Defense Evasion
+// Data Sources: SigninLogs
+// False Positive Rate: Low (5-10%)
+// Domain: Identity
+// ============================================
+
+// DESCRIPTION:
+// Detects user sign-ins from geographically impossible locations
+// within a short time window, indicating potential account compromise.
+
+// TUNING GUIDANCE:
+// - Adjust TimeThreshold based on your user travel patterns
+// - Add exceptions for VPN exit points
+// - Whitelist known corporate locations
+
+// THE QUERY:
+let TimeThreshold = 6h;
+let DistanceThresholdKM = 500;
+
+SigninLogs
+| where TimeGenerated > ago(24h)
+| where ResultType == 0  // Successful sign-ins only
+| extend 
+    City = tostring(LocationDetails.city),
+    Country = tostring(LocationDetails.countryOrRegion),
+    Latitude = todouble(LocationDetails.geoCoordinates.latitude),
+    Longitude = todouble(LocationDetails.geoCoordinates.longitude)
+| where isnotempty(City) and isnotempty(Country)
+| project 
+    TimeGenerated,
+    UserPrincipalName,
+    IPAddress,
+    City,
+    Country,
+    Latitude,
+    Longitude,
+    AppDisplayName,
+    DeviceDetail
+| order by UserPrincipalName, TimeGenerated asc
+| serialize
+| extend 
+    PrevTime = prev(TimeGenerated),
+    PrevUser = prev(UserPrincipalName),
+    PrevCity = prev(City),
+    PrevCountry = prev(Country),
+    PrevLat = prev(Latitude),
+    PrevLon = prev(Longitude),
+    PrevIP = prev(IPAddress)
+| where UserPrincipalName == PrevUser
+| extend TimeDiff = TimeGenerated - PrevTime
+| where TimeDiff < TimeThreshold
+| where Country != PrevCountry or City != PrevCity
+| extend 
+    // Haversine distance calculation
+    DistanceKM = 
+        2 * 6371 * asin(
+            sqrt(
+                pow(sin((Latitude - PrevLat) * pi() / 360), 2) +
+                cos(PrevLat * pi() / 180) * 
+                cos(Latitude * pi() / 180) *
+                pow(sin((Longitude - PrevLon) * pi() / 360), 2)
+            )
+        )
+| extend 
+    RequiredSpeedKMH = DistanceKM / (todouble(datetime_diff('minute', TimeGenerated, PrevTime)) / 60)
+| where DistanceKM > DistanceThresholdKM and RequiredSpeedKMH > 900  // Faster than commercial flight
+| project 
+    TimeGenerated,
+    User = UserPrincipalName,
+    FirstLocation = strcat(PrevCity, ", ", PrevCountry),
+    SecondLocation = strcat(City, ", ", Country),
+    FirstIP = PrevIP,
+    SecondIP = IPAddress,
+    TimeBetween = TimeDiff,
+    Distance_KM = round(DistanceKM, 0),
+    RequiredSpeed_KMH = round(RequiredSpeedKMH, 0),
+    AppUsed = AppDisplayName,
+    Severity = "High"
+
+// RESPONSE ACTIONS:
+// 1. Immediately contact user to verify activity
+// 2. If unauthorized: disable account, revoke sessions, reset password
+// 3. Investigate source IPs for broader compromise
+// 4. Check for additional suspicious activity from same user
