@@ -1,4 +1,4 @@
-**Microsoft Sentinel detection rules that ship with the tuning notes.**
+# **Microsoft Sentinel detection rules that ship with the tuning notes.**
 
 Here is one. This is the whole thing — no signup, no "request access," no truncated preview.
 
