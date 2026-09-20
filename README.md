@@ -68,7 +68,11 @@ Grants
 
 ---
 
-## That's the format. All 15 rules look like this.
+**→ Deploying these? The [Bicep and Terraform modules](https://mhartson.com/detections) are free.**
+
+---
+
+## That's the format. All 20 rules look like this.
 
 Most rule libraries give you KQL and wish you luck. The KQL is the easy part — you can get that from a language model in ten seconds. What you can't get is someone telling you which table isn't onboarded, which threshold is wrong for your environment, and which benign thing is going to page your analyst at 3am on Sunday.
 
@@ -76,7 +80,42 @@ That's what's in here. Every rule ships with the query, the prerequisites, the t
 
 ---
 
+## Signature detections
+
+Five questions security leaders actually ask, and the detection that answers each one. These are the ones worth your attention first — they cover failure modes most rule libraries don't attempt.
+
+### "We deployed Copilot agents six months ago. Nobody wrote down who owns them or what they can reach."
+**[HA-SIG-001 — Over-permissioned AI agent](rules/signature/HA-SIG-001-agent-sprawl.md)**
+Joins what each agent is *permitted* to do against what it has *actually* done, and surfaces the gap. Flags dormant agents holding high-privilege scopes, and agents with no identifiable owner — which is the finding nobody wants and everybody has.
+
+### "If our firewall stopped sending logs on a Friday night, how long until anyone noticed?"
+**[HA-SIG-002 — Log source stopped reporting](rules/signature/HA-SIG-002-log-source-went-dark.md)**
+Detects the absence of data. Every other rule fires when something happens; this one fires when something stops. A detection built on a table that went quiet doesn't fail loudly — it just never fires again while your coverage map stays green.
+
+### "If someone forged a token against our tenant, would we ever find out?"
+**[HA-SIG-003 — Federation trust or domain modified](rules/signature/HA-SIG-003-federation-trust-modified.md)**
+The Golden SAML precondition. An attacker who modifies your federation trust can mint valid tokens for any user without touching a password or generating a single failed sign-in. In a stable tenant this should fire roughly never.
+
+### "What actually happens to an account after someone leaves? I'd like to believe it's disabled the same day."
+**[HA-SIG-004 — Dormant account suddenly active](rules/signature/HA-SIG-004-dormant-account-reactivated.md)**
+The cheapest detection here to operate. Dormancy is unambiguous, the false-positive rate is low, and the true positives are almost always worth the phone call. The underlying finding is usually your offboarding process.
+
+### "Copilot didn't give anyone new permissions. So why does it feel like everyone can suddenly see everything?"
+**[HA-SIG-005 — Sensitive content surfaced through Copilot](rules/signature/HA-SIG-005-copilot-oversharing.md)**
+Copilot grants no new access — it removes the practical obscurity that was doing most of the access-control work in your tenant. A file nobody could find was effectively protected. A file Copilot will summarize on request is not.
+
+---
+
 ## The rules
+
+### Signature
+| ID | Rule | Severity |
+|---|---|---|
+| [HA-SIG-001](rules/signature/HA-SIG-001-agent-sprawl.md) | Over-permissioned AI agent | High |
+| [HA-SIG-002](rules/signature/HA-SIG-002-log-source-went-dark.md) | Log source stopped reporting | High |
+| [HA-SIG-003](rules/signature/HA-SIG-003-federation-trust-modified.md) | Federation trust or domain modified | Critical |
+| [HA-SIG-004](rules/signature/HA-SIG-004-dormant-account-reactivated.md) | Dormant account suddenly active | High |
+| [HA-SIG-005](rules/signature/HA-SIG-005-copilot-oversharing.md) | Sensitive content surfaced through Copilot | High |
 
 ### Identity — Entra ID
 | ID | Rule | Severity |
@@ -109,7 +148,7 @@ That's what's in here. Every rule ships with the query, the prerequisites, the t
 | [HA-EP-002](rules/endpoint/HA-EP-002-encoded-powershell.md) | Encoded PowerShell command execution | Medium |
 | [HA-EP-003](rules/endpoint/HA-EP-003-lolbin-network-activity.md) | Suspicious LOLBin network activity | Medium |
 
-Two worth looking at first if you're skimming: **HA-ID-005**, because app-role grants to service principals are the persistence technique behind several of the largest cloud compromises on record and almost nobody detects them — and **HA-DA-001**, because it baselines per user instead of using a static threshold, which is why most mass-download rules get disabled within a month.
+If you're skimming, start with the five signature detections above. Of the rest, **HA-ID-005** is the one most environments are blind to — app-role grants to service principals are the persistence technique behind several of the largest cloud compromises on record.
 
 ---
 
@@ -137,20 +176,33 @@ Mario Worwell — cloud security architect, 15 years across government, fintech,
 
 ---
 
-## The full pack
+## Get the deployment modules — free
 
-These 15 are the free quarter. The complete detection pack adds:
+You have the rules. Deploying twenty of them by hand through the portal is an afternoon you won't get back, and it isn't repeatable.
 
-- **~60 rules total**, same format, same tuning depth
-- **Deployment modules** — Bicep and Terraform to deploy every rule as an analytics rule, versioned, with CI validation
-- **A tuning workbook** — Sentinel workbook showing FP rate per rule, so you tune with data instead of vibes
-- **MITRE coverage map** — see exactly where your gaps are
-- **Watchlist templates** — the lookup tables these rules depend on, pre-built
+**The deployment kit is free, and it's the next step:**
 
-If you're migrating between SIEMs or standing up Defender XDR, the playbooks cover the surrounding work:
+- **Bicep and Terraform modules** — deploy every rule in this repo as a versioned analytics rule
+- **Watchlist templates** — `BreakGlassAccounts`, `ServiceAccounts`, `ProductionSubscriptions`, pre-built with the schema these rules expect
+- **The onboarding checklist** — every table and connector these rules depend on, as a pre-flight you can run in ten minutes
+- **MITRE coverage map** for the twenty rules here, so you can see your gaps before you add anything
 
-- **The SIEM Migration Playbook** — Splunk ↔ Sentinel, 56 pages → [get it](https://hartsonm.gumroad.com/l/siem-migration-playbook)
-- **The Defender XDR Playbook** — deploy, tune, and operate → [get it](https://hartsonm.gumroad.com/l/defender-xdr-playbook)
+**→ [mhartson.com/detections](https://mhartson.com/detections)**
+
+Email required, because that's how you get told when a schema change breaks a rule. Entra and Defender XDR both move; when something here stops working, subscribers hear about it first.
+
+---
+
+## Going further
+
+The detection pack extends this repo to roughly 60 rules with the same tuning depth, plus a Sentinel tuning workbook that shows false-positive rate per rule — so you tune with data instead of vibes.
+
+If you're migrating between SIEMs or standing up Defender XDR, the playbooks cover the work surrounding the detections:
+
+| | |
+|---|---|
+| **[The SIEM Migration Playbook](https://hartsonm.gumroad.com/l/siem-migration-playbook)** | Splunk ↔ Sentinel, both directions. 56 pages: data mapping, cost modeling, SPL→KQL translation, detection parity, and a gated cutover. |
+| **[The Defender XDR Playbook](https://hartsonm.gumroad.com/l/defender-xdr-playbook)** | Deploy, tune, and operate Defender XDR alongside Sentinel — the operating model, not the marketing. |
 
 ---
 
