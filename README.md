@@ -1,4 +1,6 @@
-# **Microsoft Sentinel detection rules that ship with the tuning notes.**
+# Sentinel KQL Library
+
+**Microsoft Sentinel detection rules that ship with the tuning notes.**
 
 Here is one. This is the whole thing — no signup, no "request access," no truncated preview.
 
@@ -172,7 +174,7 @@ Prerequisites and connector checks are in [docs/getting-started.md](docs/getting
 
 Mario Worwell — cloud security architect, 15 years across government, fintech, healthcare, and energy. Former Senior Cloud Solution Architect at Microsoft. These come out of real engagements in regulated environments, where a bad detection shows up as an audit finding rather than a blog comment.
 
-[mhartson.com](https://mhartson.com) · [LinkedIn](https://www.linkedin.com/in/YOURHANDLE)
+[mhartson.com](https://mhartson.com) · [LinkedIn](https://www.linkedin.com/in/mhartson310)
 
 ---
 
