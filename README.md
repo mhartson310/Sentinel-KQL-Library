@@ -1,496 +1,171 @@
-# Sentinel KQL Library
+**Microsoft Sentinel detection rules that ship with the tuning notes.**
 
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Sentinel](https://img.shields.io/badge/Microsoft_Sentinel-0078D4?logo=microsoft-azure)](https://azure.microsoft.com/services/microsoft-sentinel/)
-[![KQL](https://img.shields.io/badge/KQL-Queries-00BCF2)](https://docs.microsoft.com/azure/data-explorer/kusto/query/)
-[![Maintained](https://img.shields.io/badge/Maintained-Yes-brightgreen.svg)](https://github.com/mhartson310/Sentinel-KQL-Library)
-
-Production-tested KQL queries for Microsoft Sentinel - detection rules, threat hunting, and security analytics.
-
-**500+ queries** used in real SOC environments protecting Fortune 500 companies and government agencies.
-
-📖 **[Read the complete Sentinel guide →](https://mhartson.com/insights/sentinel-analytics-rules)**
+Here is one. This is the whole thing — no signup, no "request access," no truncated preview.
 
 ---
 
-## 🎯 What This Is
+### HA-PO-004 — Key Vault access granted, then bulk secret read
 
-**Real KQL queries** that detect actual threats in production environments.
-
-Not "hello world" examples. These are analytics rules, hunting queries, and investigation queries used by enterprise SOCs.
-
-Each query includes:
-- ✅ **MITRE ATT&CK mapping** - Know what technique you're detecting
-- ✅ **Tuning guidance** - Reduce false positives
-- ✅ **Real-world context** - When/why this fires
-- ✅ **Severity classification** - Appropriate alert levels
-- ✅ **Response actions** - What to do when it triggers
-
----
-
-## 📦 Query Categories
-
-### Detection & Response (Analytics Rules)
-
-- **[Initial Access](detection-rules/initial-access/)** - Brute force, phishing, exploit attempts
-- **[Execution](detection-rules/execution/)** - Malicious scripts, suspicious processes
-- **[Persistence](detection-rules/persistence/)** - Backdoors, scheduled tasks, registry modifications
-- **[Privilege Escalation](detection-rules/privilege-escalation/)** - Account elevation, token manipulation
-- **[Defense Evasion](detection-rules/defense-evasion/)** - Log deletion, disabling security tools
-- **[Credential Access](detection-rules/credential-access/)** - Password dumping, credential theft
-- **[Discovery](detection-rules/discovery/)** - Network scanning, account enumeration
-- **[Lateral Movement](detection-rules/lateral-movement/)** - Pass-the-hash, remote execution
-- **[Collection](detection-rules/collection/)** - Data staging, clipboard capture
-- **[Exfiltration](detection-rules/exfiltration/)** - Unusual data transfers, DNS tunneling
-- **[Impact](detection-rules/impact/)** - Ransomware, data destruction
-
-### Threat Hunting
-
-- **[User Behavior](threat-hunting/user-behavior/)** - Anomalous user activity
-- **[Network Analysis](threat-hunting/network/)** - Traffic patterns, beaconing
-- **[Endpoint Investigation](threat-hunting/endpoint/)** - Process analysis, file operations
-- **[Cloud Security](threat-hunting/cloud/)** - Azure AD, AWS, GCP anomalies
-
-### Security Operations
-
-- **[Incident Response](incident-response/)** - Investigation queries
-- **[Compliance](compliance/)** - Audit queries for FedRAMP, NIST, ISO
-- **[Performance Optimization](optimization/)** - Query tuning, cost reduction
-
----
-
-## 🚀 Quick Start
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/mhartson310/Sentinel-KQL-Library.git
-cd Sentinel-KQL-Library
-```
-
-### 2. Browse Queries by Category
-
-```bash
-# Detection rules by MITRE ATT&CK technique
-cd detection-rules/privilege-escalation/
-
-# View a specific query
-cat privilege-escalation-outside-business-hours.kql
-```
-
-### 3. Deploy to Sentinel
-
-**Option A: Manual Deployment**
-
-1. Open Azure Portal → Microsoft Sentinel
-2. Navigate to **Analytics** → **Rules**
-3. Click **Create** → **Scheduled query rule**
-4. Copy-paste the KQL query
-5. Configure severity, frequency, and actions
-
-**Option B: Automated Deployment (Terraform)**
-
-```bash
-cd terraform/
-
-# Deploy all detection rules
-terraform init
-terraform apply -var-file="production.tfvars"
-```
-
-**Option C: Azure DevOps Pipeline**
-
-```bash
-# Use the included CI/CD pipeline
-# See: .github/workflows/deploy-sentinel-rules.yml
-```
-
----
-
-## 📊 Featured Queries
-
-### Brute Force Detection
-
-**MITRE:** T1110 - Brute Force  
-**Severity:** High  
-**Use Case:** Detect password spray and credential stuffing attacks
+Someone grants themselves access to a Key Vault, then reads a pile of secrets shortly after. Either half alone is routine. The two together inside a short window is credential harvesting, and it's one of the highest-fidelity correlations available in Azure.
 
 ```kql
-SigninLogs
-| where TimeGenerated > ago(1h)
-| where ResultType != 0  // Failed sign-ins
-| summarize 
-    FailedAttempts = count(),
-    UniqueIPs = dcount(IPAddress),
-    UniqueUsers = dcount(UserPrincipalName),
-    IPList = make_set(IPAddress),
-    UserList = make_set(UserPrincipalName)
-    by bin(TimeGenerated, 5m)
-| where FailedAttempts > 10
-| extend 
-    AttackType = case(
-        UniqueUsers > 5 and UniqueIPs == 1, "Password Spray",
-        UniqueUsers == 1 and UniqueIPs > 3, "Credential Stuffing",
-        "Brute Force"
-    )
-| project 
-    TimeGenerated,
-    AttackType,
-    FailedAttempts,
-    UniqueIPs,
-    UniqueUsers,
-    IPList,
-    UserList
+let CorrelationWindow = 2h;
+let BulkThreshold = 10;          // distinct secrets read
+let Grants =
+    AzureActivity
+    | where OperationNameValue has_any (
+        "MICROSOFT.KEYVAULT/VAULTS/ACCESSPOLICIES/WRITE",
+        "MICROSOFT.KEYVAULT/VAULTS/WRITE",
+        "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE"
+      )
+    | where ActivityStatusValue in ("Success", "Succeeded")
+    | where _ResourceId has "/vaults/"
+    | extend VaultName = tostring(split(_ResourceId, "/")[-1])
+    | project GrantTime = TimeGenerated, GrantCaller = Caller,
+              GrantCallerIP = CallerIpAddress, VaultName;
+let Reads =
+    AzureDiagnostics
+    | where ResourceType == "VAULTS"
+    | where OperationName in ("SecretGet", "SecretList")
+    | where ResultSignature == "OK" or httpStatusCode_d == 200
+    | extend Vault = tostring(Resource),
+             Requester = coalesce(identity_claim_upn_s, identity_claim_appid_g)
+    | summarize SecretsRead  = dcount(id_s),
+                SecretSample = make_set(id_s, 10),
+                ReadStart    = min(TimeGenerated)
+      by Vault, Requester
+    | where SecretsRead >= BulkThreshold;
+Grants
+| join kind=inner Reads on $left.VaultName == $right.Vault
+| where ReadStart between (GrantTime .. (GrantTime + CorrelationWindow))
+| extend MinutesAfterGrant = datetime_diff("minute", ReadStart, GrantTime)
+| project GrantTime, MinutesAfterGrant, VaultName, GrantCaller,
+          GrantCallerIP, Requester, SecretsRead, SecretSample
+| order by GrantTime desc
 ```
 
-**Tuning:** Adjust threshold based on your environment (10 failures in 5 min)  
-**False Positives:** Legitimate users with expired passwords, MFA issues  
-**Response:** Block source IPs, reset affected accounts, investigate user/IP correlation
+**Before you enable this, three things will break it:**
+
+1. **Key Vault diagnostic logging is off by default, per vault.** This is the number one reason the rule returns nothing. Check which vaults you're actually seeing:
+   ```kql
+   AzureDiagnostics | where ResourceType == "VAULTS" | summarize by Resource
+   ```
+   Any vault missing from that list is invisible to this rule.
+
+2. **`BulkThreshold = 10` is probably wrong for you.** An app that reads 40 secrets at startup makes 10 useless. Baseline first:
+   ```kql
+   AzureDiagnostics
+   | where ResourceType == "VAULTS" and OperationName == "SecretGet"
+   | summarize Reads = dcount(id_s) by Requester, bin(TimeGenerated, 1h)
+   | summarize avg(Reads), max(Reads), percentile(Reads, 95) by Requester
+   ```
+
+3. **Your deployment pipelines will fire this constantly.** A service principal gets an RBAC assignment, then reads its config secrets — textbook true-positive shape, entirely benign. Exclude known deployment identities by object ID, not by display name.
+
+**The false positives you'll actually hit:** app deployments reading config after an RBAC grant (most common by far), secret rotation automation, a new engineer onboarded to a team vault, DR failover drills.
+
+**If it's real:** identify what was read — `SecretSample` gives you the names, which tells you which downstream systems are now compromised. Check whether the grant was self-issued; an identity granting itself vault access is a major escalation signal. Rotate every secret read before you do anything else.
 
 ---
 
-### Privilege Escalation (Outside Business Hours)
+## That's the format. All 15 rules look like this.
 
-**MITRE:** T1078 - Valid Accounts  
-**Severity:** Medium  
-**Use Case:** Detect suspicious admin role assignments after hours
+Most rule libraries give you KQL and wish you luck. The KQL is the easy part — you can get that from a language model in ten seconds. What you can't get is someone telling you which table isn't onboarded, which threshold is wrong for your environment, and which benign thing is going to page your analyst at 3am on Sunday.
 
-```kql
-AuditLogs
-| where TimeGenerated > ago(24h)
-| where OperationName == "Add member to role"
-| where Category == "RoleManagement"
-| extend RoleName = tostring(TargetResources[0].displayName)
-| extend UserAdded = tostring(TargetResources[0].userPrincipalName)
-| extend AddedBy = tostring(InitiatedBy.user.userPrincipalName)
-| extend Hour = datetime_part("hour", TimeGenerated)
-// Business hours: 8 AM - 6 PM
-| where Hour < 8 or Hour > 18
-| where RoleName in ("Global Administrator", "Privileged Role Administrator", "Security Administrator")
-| project 
-    TimeGenerated,
-    RoleName,
-    UserAdded,
-    AddedBy,
-    IPAddress = tostring(InitiatedBy.user.ipAddress),
-    UserAgent = tostring(AdditionalDetails[0].value)
-```
-
-**Tuning:** Define business hours for your timezone  
-**False Positives:** Emergency IT changes, global teams in different timezones  
-**Response:** Verify legitimacy with AddedBy user, check for compromise indicators
+That's what's in here. Every rule ships with the query, the prerequisites, the tuning dial and what it depends on, a false-positive table, and response guidance.
 
 ---
 
-### Lateral Movement (Pass-the-Hash Detection)
+## The rules
 
-**MITRE:** T1550.002 - Pass the Hash  
-**Severity:** High  
-**Use Case:** Detect NTLM authentication from unusual source
+### Identity — Entra ID
+| ID | Rule | Severity |
+|---|---|---|
+| [HA-ID-001](rules/identity/HA-ID-001-privileged-role-outside-change-window.md) | Privileged role assigned outside change window | High |
+| [HA-ID-002](rules/identity/HA-ID-002-legacy-auth-success.md) | Successful sign-in using legacy authentication | High |
+| [HA-ID-003](rules/identity/HA-ID-003-break-glass-activity.md) | Break-glass account activity | Critical |
+| [HA-ID-004](rules/identity/HA-ID-004-conditional-access-weakened.md) | Conditional Access policy disabled or weakened | Critical |
+| [HA-ID-005](rules/identity/HA-ID-005-app-role-granted-to-service-principal.md) | High-privilege app role granted to service principal | High |
 
-```kql
-SecurityEvent
-| where TimeGenerated > ago(1h)
-| where EventID == 4624  // Successful logon
-| where LogonType == 3  // Network logon
-| where AuthenticationPackageName == "NTLM"
-| summarize 
-    LogonCount = count(),
-    UniqueAccounts = dcount(TargetUserName),
-    Accounts = make_set(TargetUserName),
-    SourceIPs = make_set(IpAddress)
-    by Computer, IpAddress, bin(TimeGenerated, 5m)
-| where UniqueAccounts > 5  // Same source accessing multiple accounts
-| extend Severity = "High"
-| project 
-    TimeGenerated,
-    SourceIP = IpAddress,
-    TargetComputer = Computer,
-    UniqueAccounts,
-    Accounts,
-    LogonCount,
-    Severity
-```
+### Posture — Azure & Defender for Cloud
+| ID | Rule | Severity |
+|---|---|---|
+| [HA-PO-001](rules/posture/HA-PO-001-defender-plan-disabled.md) | Defender for Cloud plan disabled | High |
+| [HA-PO-002](rules/posture/HA-PO-002-nsg-opened-to-internet.md) | NSG rule opened to the internet on a management port | High |
+| [HA-PO-003](rules/posture/HA-PO-003-public-ip-on-production.md) | Public IP attached to a production resource | Medium |
+| [HA-PO-004](rules/posture/HA-PO-004-keyvault-grant-then-bulk-read.md) | Key Vault access granted, then bulk secret read | Critical |
 
-**Tuning:** Adjust `UniqueAccounts` threshold for your environment  
-**False Positives:** Service accounts, automation tools, scanning tools  
-**Response:** Isolate source IP, reset affected accounts, hunt for additional lateral movement
+### Data
+| ID | Rule | Severity |
+|---|---|---|
+| [HA-DA-001](rules/data/HA-DA-001-mass-sharepoint-download.md) | Mass download from SharePoint or OneDrive | High |
+| [HA-DA-002](rules/data/HA-DA-002-storage-anonymous-access-enabled.md) | Storage account anonymous access enabled | Critical |
+| [HA-DA-003](rules/data/HA-DA-003-anomalous-storage-egress.md) | Anomalous egress volume from storage | Medium |
 
----
+### Endpoint — Defender XDR
+| ID | Rule | Severity |
+|---|---|---|
+| [HA-EP-001](rules/endpoint/HA-EP-001-defender-protection-disabled.md) | Tamper protection or real-time protection disabled | High |
+| [HA-EP-002](rules/endpoint/HA-EP-002-encoded-powershell.md) | Encoded PowerShell command execution | Medium |
+| [HA-EP-003](rules/endpoint/HA-EP-003-lolbin-network-activity.md) | Suspicious LOLBin network activity | Medium |
 
-### Data Exfiltration (Large File Uploads)
-
-**MITRE:** T1567 - Exfiltration Over Web Service  
-**Severity:** Medium  
-**Use Case:** Detect unusual large file uploads to cloud services
-
-```kql
-OfficeActivity
-| where TimeGenerated > ago(1h)
-| where Operation in ("FileUploaded", "FileSyncUploadedFull")
-| where OfficeWorkload == "OneDrive" or OfficeWorkload == "SharePoint"
-| extend FileSize_MB = todouble(ObjectId) / 1048576  // Convert to MB
-| where FileSize_MB > 100  // Files larger than 100 MB
-| summarize 
-    TotalUploadMB = sum(FileSize_MB),
-    FileCount = count(),
-    Files = make_set(SourceFileName)
-    by UserId, ClientIP, bin(TimeGenerated, 1h)
-| where TotalUploadMB > 500  // More than 500 MB in 1 hour
-| extend Risk = case(
-    TotalUploadMB > 2000, "Critical",
-    TotalUploadMB > 1000, "High",
-    "Medium"
-)
-| project 
-    TimeGenerated,
-    User = UserId,
-    SourceIP = ClientIP,
-    TotalUploadMB,
-    FileCount,
-    Files,
-    Risk
-```
-
-**Tuning:** Set thresholds based on normal business activity  
-**False Positives:** Video uploads, legitimate large file transfers, backup operations  
-**Response:** Contact user, verify business justification, check for account compromise
+Two worth looking at first if you're skimming: **HA-ID-005**, because app-role grants to service principals are the persistence technique behind several of the largest cloud compromises on record and almost nobody detects them — and **HA-DA-001**, because it baselines per user instead of using a static threshold, which is why most mass-download rules get disabled within a month.
 
 ---
 
-## 📚 Query Structure
+## How to deploy these without regretting it
 
-Each query file includes:
+Do not paste these into an analytics rule and turn them on. The order that works:
 
-```kql
-// ============================================
-// QUERY METADATA
-// ============================================
-// Name: Privilege Escalation - Outside Business Hours
-// MITRE ATT&CK: T1078 - Valid Accounts
-// Severity: Medium
-// Frequency: Every 1 hour
-// Tactics: Privilege Escalation, Persistence
-// Data Sources: AuditLogs (Azure AD)
-// False Positive Rate: Low
-// Author: Mario Hartson
-// Website: https://mhartson.com
-// ============================================
+1. **Run it as a hunting query.** 30 days back. Look at what comes out.
+2. **Read the tuning notes and apply them.** Every rule has a section telling you what to change.
+3. **Re-run until the results are things you'd actually want to see at 3am.**
+4. **Then promote to an analytics rule** at the frequency in the metadata block.
+5. **Watch it for two weeks.** Track the FP rate. Tune again.
 
-// DESCRIPTION:
-// Detects when privileged roles are assigned outside of 
-// normal business hours (8 AM - 6 PM). Attackers often
-// perform privilege escalation during off-hours to avoid
-// detection.
+Skipping step 1 is how teams end up disabling rules instead of tuning them.
 
-// TUNING GUIDANCE:
-// 1. Adjust business hours for your timezone
-// 2. Add exceptions for legitimate global team members
-// 3. Consider reducing threshold for Global Admin role
-// 4. Whitelist emergency change tickets
-
-// RESPONSE ACTIONS:
-// 1. Verify with the user who made the change (AddedBy)
-// 2. Check if change ticket exists
-// 3. Review account for compromise indicators
-// 4. If unauthorized, remove role assignment immediately
-
-// THE QUERY:
-AuditLogs
-| where TimeGenerated > ago(24h)
-// ... query code ...
-```
+Prerequisites and connector checks are in [docs/getting-started.md](docs/getting-started.md).
 
 ---
 
-## 🎓 How to Use These Queries
+## Who wrote these
 
-### For SOC Analysts
+Mario Worwell — cloud security architect, 15 years across government, fintech, healthcare, and energy. Former Senior Cloud Solution Architect at Microsoft. These come out of real engagements in regulated environments, where a bad detection shows up as an audit finding rather than a blog comment.
 
-**Step 1: Understand the Detection**
-- Read the MITRE ATT&CK mapping
-- Understand what attack this detects
-- Know the severity and expected false positive rate
-
-**Step 2: Deploy as Analytics Rule**
-- Copy query to Sentinel Analytics
-- Set appropriate frequency (1 hour, 5 min, etc.)
-- Configure alert actions (email, Logic App, SOAR)
-
-**Step 3: Tune for Your Environment**
-- Run query in Logs to see baseline
-- Adjust thresholds to reduce false positives
-- Add exceptions for known legitimate activity
-
-**Step 4: Create Response Playbook**
-- Document what to check when alert fires
-- Create SOAR playbook for automated response
-- Define escalation criteria
-
-### For Threat Hunters
-
-**Step 1: Understand the Hunt Hypothesis**
-- What behavior are you looking for?
-- What data sources are required?
-- What time range makes sense?
-
-**Step 2: Run Query Interactively**
-- Start with broad query, then narrow
-- Visualize results to spot patterns
-- Pivot to related data sources
-
-**Step 3: Iterate and Refine**
-- Adjust time ranges and thresholds
-- Look for anomalies in results
-- Document findings
-
-### For Detection Engineers
-
-**Step 1: Review Query Logic**
-- Understand each operator and filter
-- Verify MITRE mapping is correct
-- Check for performance issues
-
-**Step 2: Optimize Performance**
-- Use summarize early in query
-- Leverage query best practices
-- Test with different time ranges
-
-**Step 3: Validate Detection**
-- Test with known attack scenarios
-- Measure false positive rate
-- Document tuning decisions
+[mhartson.com](https://mhartson.com) · [LinkedIn](https://www.linkedin.com/in/YOURHANDLE)
 
 ---
 
-## 🛠️ Query Optimization Tips
+## The full pack
 
-### Performance Best Practices
+These 15 are the free quarter. The complete detection pack adds:
 
-**1. Filter Early**
-```kql
-// ❌ BAD - Processes entire table first
-SigninLogs
-| summarize count() by UserPrincipalName
-| where TimeGenerated > ago(1h)
+- **~60 rules total**, same format, same tuning depth
+- **Deployment modules** — Bicep and Terraform to deploy every rule as an analytics rule, versioned, with CI validation
+- **A tuning workbook** — Sentinel workbook showing FP rate per rule, so you tune with data instead of vibes
+- **MITRE coverage map** — see exactly where your gaps are
+- **Watchlist templates** — the lookup tables these rules depend on, pre-built
 
-// ✅ GOOD - Filters first, processes less data
-SigninLogs
-| where TimeGenerated > ago(1h)
-| summarize count() by UserPrincipalName
-```
+If you're migrating between SIEMs or standing up Defender XDR, the playbooks cover the surrounding work:
 
-**2. Use Specific Columns**
-```kql
-// ❌ BAD - Returns all columns
-SigninLogs | where TimeGenerated > ago(1h)
-
-// ✅ GOOD - Returns only needed columns
-SigninLogs
-| where TimeGenerated > ago(1h)
-| project TimeGenerated, UserPrincipalName, IPAddress, ResultType
-```
-
-**3. Leverage Summarize**
-```kql
-// ❌ BAD - Expensive join
-SigninLogs
-| join kind=inner (AuditLogs) on UserPrincipalName
-
-// ✅ GOOD - Pre-aggregate before join
-SigninLogs
-| summarize LogonCount = count() by UserPrincipalName
-| join (AuditLogs | summarize AuditCount = count() by UserPrincipalName) on UserPrincipalName
-```
+- **The SIEM Migration Playbook** — Splunk ↔ Sentinel, 56 pages → [get it](https://hartsonm.gumroad.com/l/siem-migration-playbook)
+- **The Defender XDR Playbook** — deploy, tune, and operate → [get it](https://hartsonm.gumroad.com/l/defender-xdr-playbook)
 
 ---
 
-## 💰 Cost Optimization
+## Contributing
 
-### Reduce Log Analytics Costs
+**Found a false positive I didn't document?** That's the most valuable thing you can contribute here. Open an issue with the rule ID, what fired, why it was benign, and the exclusion that fixed it.
 
-**1. Sample Data for Testing**
-```kql
-// Use sample() for development/testing
-SigninLogs
-| sample 1000  // Test with 1000 random rows
-| where ResultType != 0
-```
+**Want a rule that doesn't exist?** Open an issue describing the scenario in plain language. No KQL required.
 
-**2. Archive Old Logs**
-```kql
-// Move to cheaper storage after 90 days
-// Configure in Log Analytics workspace settings
-```
+Full guidelines in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-**3. Use Basic Logs for Low-Value Data**
-```kql
-// Configure tables as Basic Logs tier
-// 80% cost reduction for suitable tables
-```
+## License
 
----
+MIT. Use them commercially, modify them, ship them in your environment. Attribution appreciated, not required.
 
-## 🤝 Contributing
+## Disclaimer
 
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-**How to contribute:**
-1. Fork the repository
-2. Create query in appropriate category folder
-3. Follow query structure template
-4. Test query in your Sentinel environment
-5. Submit pull request with query + documentation
-
-**What we're looking for:**
-- Production-tested queries (not theoretical)
-- Clear MITRE ATT&CK mapping
-- Tuning guidance included
-- Low false positive rate
-- Real-world use cases
-
----
-
-## 📝 License
-
-MIT License - see [LICENSE](LICENSE) file.
-
----
-
-## 🙋 Need Help?
-
-**Free Resources:**
-- 📖 [Complete Sentinel Guide](https://mhartson.com/insights/sentinel-analytics-rules)
-- 📥 [Cloud Security Starter Kit](https://mhartson.com/resources/starter-kit)
-- 💬 [Hartson Security Guild Community](https://hartson-security-guild.circle.so)
-
-**Professional Services:**
-- 🔍 Sentinel deployment and configuration
-- 📊 Custom detection rule development
-- 🎓 SOC analyst training
-- 🏗️ SIEM architecture design
-
-**[Book a Sentinel consultation →](https://mhartson.com/consulting)**
-
----
-
-## 📈 Statistics
-
-- **500+ Queries** across all MITRE ATT&CK techniques
-- **Production-tested** in enterprise SOCs
-- **Low false positive rate** (<5% for most queries)
-- **Regular updates** as new threats emerge
-
----
-
-## 🔗 Related Projects
-
-- [Azure-Landing-Zones](https://github.com/mhartson310/Azure-Landing-Zones) - Infrastructure for hosting Sentinel
-- [FedRAMP-Azure-Toolkit](https://github.com/mhartson310/FedRAMP-Azure-Toolkit) - Compliance automation including SI-4
-- [Azure-Security-Baseline](https://github.com/mhartson310/Azure-Security-Baseline) - Security hardening templates
-
----
-
-**Built with 🔍 by [Mario Hartson](https://mhartson.com)** | Cloud Security Architect | Detection Engineer
-
-📧 mario@hartsonadvisory.com | 💼 [LinkedIn](https://linkedin.com/in/mariohartson) | 🌐 [mhartson.com](https://mhartson.com)
+Test in a non-production workspace first. These are starting points tuned to environments I've worked in, not universal truths about yours. Schema changes on both Entra and Defender XDR will eventually break something here — the tuning notes tell you how to check.
