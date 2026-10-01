@@ -1,0 +1,35 @@
+let RAGSecurityEvents = () {
+    ContainerAppConsoleLogs_CL
+    | extend evt = parse_json(Log_s)
+    | where tostring(evt.schema_version) == "1.0"
+    | project
+        TimeGenerated,
+        EventType = tostring(evt.event_type),
+        Outcome = tostring(evt.outcome),
+        CorrelationId = tostring(evt.correlation_id),
+        UserHash = tostring(evt.user_hash),
+        TenantHash = tostring(evt.tenant_hash),
+        SearchIndex = tostring(evt.search_index),
+        RetrievedCount = toint(evt.retrieved_count),
+        GroupCount = toint(evt.group_count),
+        SourceDocumentIds = evt.source_document_ids,
+        ModelDeployment = tostring(evt.model_deployment),
+        StatusCode = toint(evt.status_code),
+        Reason = tostring(evt.reason);
+};
+let hourlyBaseline =
+    RAGSecurityEvents()
+    | where EventType == "rag_query_completed"
+    | where TimeGenerated between (ago(7d) .. ago(1h))
+    | summarize HourlyCount=count() by UserHash, bin(TimeGenerated, 1h);
+let baseline =
+    hourlyBaseline
+    | summarize BaselinePerHour=avg(HourlyCount) by UserHash;
+RAGSecurityEvents()
+| where EventType == "rag_query_completed"
+| where TimeGenerated > ago(1h)
+| summarize Current=count() by UserHash, TenantHash
+| join kind=leftouter baseline on UserHash
+| extend Expected=coalesce(BaselinePerHour, 0.0)
+| where Current >= 20 and (Expected == 0.0 or Current > Expected * 3)
+| order by Current desc
