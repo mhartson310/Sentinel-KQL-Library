@@ -1,0 +1,25 @@
+let RAGSecurityEvents = () {
+    ContainerAppConsoleLogs_CL
+    | extend evt = parse_json(Log_s)
+    | where tostring(evt.schema_version) == "1.0"
+    | project
+        TimeGenerated,
+        EventType = tostring(evt.event_type),
+        Outcome = tostring(evt.outcome),
+        CorrelationId = tostring(evt.correlation_id),
+        UserHash = tostring(evt.user_hash),
+        TenantHash = tostring(evt.tenant_hash),
+        SearchIndex = tostring(evt.search_index),
+        RetrievedCount = toint(evt.retrieved_count),
+        GroupCount = toint(evt.group_count),
+        SourceDocumentIds = evt.source_document_ids,
+        ModelDeployment = tostring(evt.model_deployment),
+        StatusCode = toint(evt.status_code),
+        Reason = tostring(evt.reason);
+};
+
+RAGSecurityEvents()
+| where EventType == "rag_no_authorized_context"
+| summarize NoContext=count() by UserHash, TenantHash, SearchIndex, bin(TimeGenerated, 15m)
+| where NoContext >= 5
+| order by NoContext desc
