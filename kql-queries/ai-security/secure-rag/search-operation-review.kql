@@ -1,0 +1,8 @@
+AzureDiagnostics
+| where TimeGenerated > ago(24h)
+| where ResourceProvider =~ "MICROSOFT.SEARCH"
+| summarize
+    Operations=count(),
+    Results=make_set(ResultType, 10)
+    by OperationName, Resource, bin(TimeGenerated, 15m)
+| order by Operations desc
