@@ -1,0 +1,33 @@
+name: Zero Trust Conditional Remediation Validation
+
+on:
+  push:
+    paths:
+      - "deploy/playbooks/zero-trust/conditional-remediation/**"
+      - ".github/workflows/zero-trust-conditional-remediation-validation.yml"
+  pull_request:
+    paths:
+      - "deploy/playbooks/zero-trust/conditional-remediation/**"
+      - ".github/workflows/zero-trust-conditional-remediation-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate ARM template JSON
+        run: |
+          jq empty deploy/playbooks/zero-trust/conditional-remediation/pb-zt-002-remediate-rbac/azuredeploy.json
+          jq empty deploy/playbooks/zero-trust/conditional-remediation/pb-zt-003-restore-diagnostics/azuredeploy.json
+
+      - name: Verify safety gates are present
+        run: |
+          grep -q "RemediationApproved" deploy/playbooks/zero-trust/conditional-remediation/pb-zt-002-remediate-rbac/azuredeploy.json
+          grep -q "roleassignments" deploy/playbooks/zero-trust/conditional-remediation/pb-zt-002-remediate-rbac/azuredeploy.json
+          grep -q "RemediationApproved" deploy/playbooks/zero-trust/conditional-remediation/pb-zt-003-restore-diagnostics/azuredeploy.json
+          grep -q "microsoft.keyvault" deploy/playbooks/zero-trust/conditional-remediation/pb-zt-003-restore-diagnostics/azuredeploy.json
+          grep -q "microsoft.storage" deploy/playbooks/zero-trust/conditional-remediation/pb-zt-003-restore-diagnostics/azuredeploy.json
