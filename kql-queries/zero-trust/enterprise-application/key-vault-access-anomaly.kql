@@ -1,0 +1,35 @@
+// Zero Trust Enterprise Application
+// Detection: Key Vault access anomaly
+// Architecture: https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/tree/main/architecture/enterprise-application
+//
+// Purpose:
+// Find identities performing unusually high volumes of Key Vault read/list operations.
+//
+// Prerequisite:
+// Key Vault diagnostic logs must be sent to Log Analytics.
+//
+// Tune:
+// Baseline service principals before enabling as an analytics rule. Applications
+// that read many secrets at startup can create legitimate spikes.
+
+let Lookback = 30m;
+let Window = 10m;
+let OperationThreshold = 25;
+AzureDiagnostics
+| where TimeGenerated > ago(Lookback)
+| where ResourceProvider =~ "MICROSOFT.KEYVAULT"
+| where OperationName in~ ("SecretGet", "SecretList", "KeyGet", "KeyList", "CertificateGet", "CertificateList")
+| extend
+    AppId = tostring(identity_claim_appid_g),
+    ObjectId = tostring(identity_claim_oid_g),
+    UPN = tostring(identity_claim_upn_s),
+    Caller = coalesce(UPN, AppId, ObjectId, "unknown")
+| summarize
+    Operations = count(),
+    DistinctOperations = dcount(OperationName),
+    OperationSet = make_set(OperationName, 10),
+    Vaults = make_set(Resource, 10),
+    CallerIPs = make_set(CallerIPAddress, 10)
+    by Caller, bin(TimeGenerated, Window)
+| where Operations >= OperationThreshold
+| order by Operations desc
