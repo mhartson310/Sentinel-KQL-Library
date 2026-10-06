@@ -184,6 +184,8 @@ Three production-oriented analytics-rule candidates now extend the Zero Trust En
 
 Each rule includes MITRE mapping, schedule, entity mapping, tuning guidance, false positives, and response steps.
 
+**[Deploy all three with Bicep →](deploy/bicep/zero-trust-analytics/README.md)**
+
 ## How to deploy these without regretting it
 
 Do not paste these into an analytics rule and turn them on. The order that works:
