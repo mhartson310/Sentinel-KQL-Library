@@ -154,6 +154,24 @@ If you're skimming, start with the five signature detections above. Of the rest,
 
 ---
 
+
+## Architecture-linked Zero Trust detections
+
+The library also includes detections mapped directly to the **[Azure Zero Trust Reference Architectures](https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures)** repo.
+
+### Zero Trust Enterprise Application
+**[Open the KQL detection pack](kql-queries/zero-trust/enterprise-application/README.md)**
+
+It covers:
+
+- protected-service exposure changes;
+- privileged RBAC assignments;
+- diagnostic-setting changes;
+- Key Vault access anomalies;
+- Conditional Access failure spikes.
+
+The paired architecture includes the [reference design](https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/tree/main/architecture/enterprise-application), [Terraform deployment](https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/tree/main/terraform/enterprise-application), and [negative-security tests](https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/tree/main/tests/enterprise-application).
+
 ## How to deploy these without regretting it
 
 Do not paste these into an analytics rule and turn them on. The order that works:
