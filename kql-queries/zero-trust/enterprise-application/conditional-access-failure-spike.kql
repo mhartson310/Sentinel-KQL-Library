@@ -1,0 +1,29 @@
+// Zero Trust Enterprise Application
+// Detection: Conditional Access failure spike
+// Architecture: https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/tree/main/architecture/enterprise-application
+//
+// Purpose:
+// Detect identities repeatedly blocked by Conditional Access in a short window.
+// This can indicate probing, risky sign-in behavior, device noncompliance,
+// automation using the wrong identity, or legitimate user friction.
+//
+// Tune:
+// - Exclude known test/service identities.
+// - Baseline frequent travelers and automation.
+// - Investigate policy result, device state, sign-in risk, IP/location, and app.
+
+let Lookback = 30m;
+let Window = 10m;
+let FailureThreshold = 8;
+SigninLogs
+| where TimeGenerated > ago(Lookback)
+| where ConditionalAccessStatus =~ "failure"
+| summarize
+    Failures = count(),
+    Apps = make_set(AppDisplayName, 10),
+    IPs = make_set(IPAddress, 10),
+    ResultTypes = make_set(ResultType, 10),
+    Locations = make_set(Location, 10)
+    by UserPrincipalName, UserId, bin(TimeGenerated, Window)
+| where Failures >= FailureThreshold
+| order by Failures desc
