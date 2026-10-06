@@ -1,0 +1,34 @@
+name: Zero Trust SOAR Validation
+
+on:
+  push:
+    paths:
+      - "deploy/playbooks/zero-trust/**"
+      - "deploy/bicep/zero-trust-automation/**"
+      - ".github/workflows/zero-trust-soar-validation.yml"
+  pull_request:
+    paths:
+      - "deploy/playbooks/zero-trust/**"
+      - "deploy/bicep/zero-trust-automation/**"
+      - ".github/workflows/zero-trust-soar-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate playbook JSON
+        run: |
+          jq empty deploy/playbooks/zero-trust/pb-zt-001-exposure-change/azuredeploy.json
+          jq empty deploy/playbooks/zero-trust/pb-zt-002-rbac-assignment/azuredeploy.json
+          jq empty deploy/playbooks/zero-trust/pb-zt-003-diagnostics-changed/azuredeploy.json
+
+      - name: Install Bicep
+        run: az bicep install
+
+      - name: Build automation rules
+        run: az bicep build --file deploy/bicep/zero-trust-automation/main.bicep
