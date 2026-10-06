@@ -1,0 +1,26 @@
+name: Bicep Validation
+
+on:
+  push:
+    paths:
+      - "deploy/bicep/**"
+      - ".github/workflows/bicep-validation.yml"
+  pull_request:
+    paths:
+      - "deploy/bicep/**"
+      - ".github/workflows/bicep-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bicep
+        run: az bicep install
+
+      - name: Build Zero Trust analytics deployment
+        run: az bicep build --file deploy/bicep/zero-trust-analytics/main.bicep
