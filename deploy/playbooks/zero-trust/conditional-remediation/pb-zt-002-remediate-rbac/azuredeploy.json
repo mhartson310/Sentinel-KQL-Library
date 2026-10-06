@@ -1,0 +1,258 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "PlaybookName": {
+      "type": "string",
+      "defaultValue": "PB-ZT-002-Remediate-RBAC"
+    }
+  },
+  "variables": {
+    "SentinelConnectionName": "[concat(parameters('PlaybookName'), '-sentinel')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Web/connections",
+      "apiVersion": "2016-06-01",
+      "name": "[variables('SentinelConnectionName')]",
+      "location": "[resourceGroup().location]",
+      "kind": "V1",
+      "properties": {
+        "displayName": "[variables('SentinelConnectionName')]",
+        "customParameterValues": {},
+        "parameterValueType": "Alternative",
+        "api": {
+          "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('PlaybookName')]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/connections', variables('SentinelConnectionName'))]"
+      ],
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "$connections": {
+              "defaultValue": {},
+              "type": "Object"
+            }
+          },
+          "triggers": {
+            "Microsoft_Sentinel_incident": {
+              "type": "ApiConnectionWebhook",
+              "inputs": {
+                "body": {
+                  "callback_url": "@{listCallbackUrl()}"
+                },
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                  }
+                },
+                "path": "/incident-creation"
+              }
+            }
+          },
+          "actions": {
+            "Filter_role_assignment_entities": {
+              "type": "Query",
+              "inputs": {
+                "from": "@triggerBody()?['object']?['properties']?['relatedEntities']",
+                "where": "@and(equals(item()?['kind'], 'AzureResource'), contains(toLower(string(item()?['properties']?['resourceId'])), '/providers/microsoft.authorization/roleassignments/'))"
+              },
+              "runAfter": {}
+            },
+            "Approval_and_target_gate": {
+              "type": "If",
+              "expression": {
+                "and": [
+                  {
+                    "contains": [
+                      "@string(triggerBody()?['object']?['properties']?['labels'])",
+                      "RemediationApproved"
+                    ]
+                  },
+                  {
+                    "contains": [
+                      "@string(triggerBody()?['object']?['properties']?['labels'])",
+                      "PrivilegedAccess"
+                    ]
+                  },
+                  {
+                    "equals": [
+                      "@length(body('Filter_role_assignment_entities'))",
+                      1
+                    ]
+                  }
+                ]
+              },
+              "actions": {
+                "Compose_role_assignment_id": {
+                  "type": "Compose",
+                  "inputs": "@first(body('Filter_role_assignment_entities'))?['properties']?['resourceId']",
+                  "runAfter": {}
+                },
+                "Validate_role_assignment_before_delete": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "GET",
+                    "uri": "@{concat('https://management.azure.com', outputs('Compose_role_assignment_id'), '?api-version=2022-04-01')}",
+                    "authentication": {
+                      "type": "ManagedServiceIdentity",
+                      "audience": "https://management.azure.com/"
+                    }
+                  },
+                  "runAfter": {
+                    "Compose_role_assignment_id": [
+                      "Succeeded"
+                    ]
+                  }
+                },
+                "Delete_role_assignment": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "DELETE",
+                    "uri": "@{concat('https://management.azure.com', outputs('Compose_role_assignment_id'), '?api-version=2022-04-01')}",
+                    "authentication": {
+                      "type": "ManagedServiceIdentity",
+                      "audience": "https://management.azure.com/"
+                    }
+                  },
+                  "runAfter": {
+                    "Validate_role_assignment_before_delete": [
+                      "Succeeded"
+                    ]
+                  }
+                },
+                "Verify_role_assignment_removed": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "GET",
+                    "uri": "@{concat('https://management.azure.com', outputs('Compose_role_assignment_id'), '?api-version=2022-04-01')}",
+                    "authentication": {
+                      "type": "ManagedServiceIdentity",
+                      "audience": "https://management.azure.com/"
+                    },
+                    "retryPolicy": {
+                      "type": "none"
+                    }
+                  },
+                  "runAfter": {
+                    "Delete_role_assignment": [
+                      "Succeeded"
+                    ]
+                  }
+                },
+                "Comment_remediation_verified": {
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "body": {
+                      "incidentArmId": "@triggerBody()?['object']?['id']",
+                      "message": "<p><b>HA-ZT-002 second-stage remediation completed.</b><br><br>The approved role assignment was deleted. Post-remediation verification returned the expected not-found result for the assignment resource.<br><br><b>Target:</b> @{outputs('Compose_role_assignment_id')}<br><b>Next:</b> Re-run the least-privilege validation test and review related role assignments from the same caller.</p>"
+                    },
+                    "host": {
+                      "connection": {
+                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                      }
+                    },
+                    "method": "post",
+                    "path": "/Incidents/Comment"
+                  },
+                  "runAfter": {
+                    "Verify_role_assignment_removed": [
+                      "Failed"
+                    ]
+                  }
+                },
+                "Comment_remediation_not_verified": {
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "body": {
+                      "incidentArmId": "@triggerBody()?['object']?['id']",
+                      "message": "<p><b>HA-ZT-002 remediation requires review.</b><br><br>The delete action completed, but the verification GET did not return the expected not-found behavior. Confirm the role assignment state manually before closing the incident.<br><br><b>Target:</b> @{outputs('Compose_role_assignment_id')}</p>"
+                    },
+                    "host": {
+                      "connection": {
+                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                      }
+                    },
+                    "method": "post",
+                    "path": "/Incidents/Comment"
+                  },
+                  "runAfter": {
+                    "Verify_role_assignment_removed": [
+                      "Succeeded"
+                    ]
+                  }
+                }
+              },
+              "else": {
+                "actions": {
+                  "Comment_gate_blocked": {
+                    "type": "ApiConnection",
+                    "inputs": {
+                      "body": {
+                        "incidentArmId": "@triggerBody()?['object']?['id']",
+                        "message": "<p><b>HA-ZT-002 remediation blocked by safety gate.</b><br><br>No RBAC deletion was attempted. Requirements: incident label <b>RemediationApproved</b>, the existing <b>PrivilegedAccess</b> label, and exactly one AzureResource entity whose ResourceId is a Microsoft.Authorization role assignment.<br><br>Review the incident, add the approval label only after validation, then run this playbook manually again.</p>"
+                      },
+                      "host": {
+                        "connection": {
+                          "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                        }
+                      },
+                      "method": "post",
+                      "path": "/Incidents/Comment"
+                    }
+                  }
+                }
+              },
+              "runAfter": {
+                "Filter_role_assignment_entities": [
+                  "Succeeded"
+                ]
+              }
+            }
+          },
+          "outputs": {}
+        },
+        "parameters": {
+          "$connections": {
+            "value": {
+              "azuresentinel": {
+                "connectionId": "[resourceId('Microsoft.Web/connections', variables('SentinelConnectionName'))]",
+                "connectionName": "[variables('SentinelConnectionName')]",
+                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]",
+                "connectionProperties": {
+                  "authentication": {
+                    "type": "ManagedServiceIdentity"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "playbookResourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Logic/workflows', parameters('PlaybookName'))]"
+    },
+    "playbookPrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Logic/workflows', parameters('PlaybookName')), '2019-05-01', 'Full').identity.principalId]"
+    }
+  }
+}
