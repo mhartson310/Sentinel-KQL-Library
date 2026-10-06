@@ -172,6 +172,18 @@ It covers:
 
 The paired architecture includes the [reference design](https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/tree/main/architecture/enterprise-application), [Terraform deployment](https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/tree/main/terraform/enterprise-application), and [negative-security tests](https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/tree/main/tests/enterprise-application).
 
+### Zero Trust architecture analytics rules
+
+Three production-oriented analytics-rule candidates now extend the Zero Trust Enterprise Application pack:
+
+| ID | Rule | Severity |
+|---|---|---|
+| [HA-ZT-001](rules/zero-trust/HA-ZT-001-protected-service-exposure-changed.md) | Protected service exposure changed | High |
+| [HA-ZT-002](rules/zero-trust/HA-ZT-002-privileged-rbac-assignment-created.md) | Privileged RBAC assignment created | High |
+| [HA-ZT-003](rules/zero-trust/HA-ZT-003-diagnostic-settings-changed.md) | Diagnostic settings changed | High |
+
+Each rule includes MITRE mapping, schedule, entity mapping, tuning guidance, false positives, and response steps.
+
 ## How to deploy these without regretting it
 
 Do not paste these into an analytics rule and turn them on. The order that works:
