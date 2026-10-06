@@ -118,3 +118,19 @@ Recommended gates:
 - second signal or analyst approval.
 
 Only then should a playbook automatically remove an RBAC assignment, disable public access, or restore a diagnostic setting.
+
+
+## Second-stage conditional remediation
+
+The next response layer is now available for HA-ZT-002 and HA-ZT-003:
+
+**[Conditional remediation playbooks](conditional-remediation/README.md)**
+
+These playbooks are deliberately **manual incident playbooks**, not automation-rule actions. An analyst must validate the incident, add the `RemediationApproved` label, and run the playbook from the incident. The playbook then applies additional target/risk gates, performs the narrow remediation, validates the result, and writes the outcome back to the incident.
+
+Current actions:
+
+- **HA-ZT-002:** delete the exact unauthorized Azure RBAC role assignment surfaced as the incident's AzureResource entity.
+- **HA-ZT-003:** restore the approved Key Vault or Storage diagnostic-setting baseline and verify the Log Analytics destination.
+
+Unknown or ambiguous targets fail closed.
