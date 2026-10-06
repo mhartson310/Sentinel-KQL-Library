@@ -1,0 +1,35 @@
+// Zero Trust Enterprise Application
+// Detection: Diagnostic settings changed
+// Architecture: https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/tree/main/architecture/enterprise-application
+//
+// Purpose:
+// Detect creation/update/deletion of Azure Monitor diagnostic settings.
+// DELETE is generally higher priority because it can create telemetry blind spots.
+//
+// Tune:
+// - Exclude approved IaC identities.
+// - Alert aggressively on DELETE for high-value resources.
+// - Correlate WRITE activity to an approved change window.
+
+let Lookback = 1h;
+AzureActivity
+| where TimeGenerated > ago(Lookback)
+| where OperationNameValue has_any (
+    "MICROSOFT.INSIGHTS/DIAGNOSTICSETTINGS/WRITE",
+    "MICROSOFT.INSIGHTS/DIAGNOSTICSETTINGS/DELETE"
+)
+| extend ChangeType = iff(OperationNameValue has "/DELETE", "Delete", "Write")
+| extend SeverityHint = iff(ChangeType == "Delete", "High", "Medium")
+| project
+    TimeGenerated,
+    SeverityHint,
+    ChangeType,
+    Caller,
+    CallerIpAddress,
+    ActivityStatusValue,
+    SubscriptionId,
+    ResourceGroup,
+    ResourceId,
+    CorrelationId,
+    Properties
+| order by TimeGenerated desc
