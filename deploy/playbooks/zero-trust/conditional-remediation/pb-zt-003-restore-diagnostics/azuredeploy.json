@@ -1,0 +1,301 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "PlaybookName": {
+      "type": "string",
+      "defaultValue": "PB-ZT-003-Restore-Diagnostics"
+    },
+    "LogAnalyticsWorkspaceResourceId": {
+      "type": "string",
+      "metadata": {
+        "description": "Approved Log Analytics workspace resource ID used as the restoration baseline."
+      }
+    }
+  },
+  "variables": {
+    "SentinelConnectionName": "[concat(parameters('PlaybookName'), '-sentinel')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Web/connections",
+      "apiVersion": "2016-06-01",
+      "name": "[variables('SentinelConnectionName')]",
+      "location": "[resourceGroup().location]",
+      "kind": "V1",
+      "properties": {
+        "displayName": "[variables('SentinelConnectionName')]",
+        "customParameterValues": {},
+        "parameterValueType": "Alternative",
+        "api": {
+          "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('PlaybookName')]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/connections', variables('SentinelConnectionName'))]"
+      ],
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "$connections": {
+              "defaultValue": {},
+              "type": "Object"
+            }
+          },
+          "triggers": {
+            "Microsoft_Sentinel_incident": {
+              "type": "ApiConnectionWebhook",
+              "inputs": {
+                "body": {
+                  "callback_url": "@{listCallbackUrl()}"
+                },
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                  }
+                },
+                "path": "/incident-creation"
+              }
+            }
+          },
+          "actions": {
+            "Filter_diagnostic_setting_entities": {
+              "type": "Query",
+              "inputs": {
+                "from": "@triggerBody()?['object']?['properties']?['relatedEntities']",
+                "where": "@and(equals(item()?['kind'], 'AzureResource'), contains(toLower(string(item()?['properties']?['resourceId'])), '/providers/microsoft.insights/diagnosticsettings/'))"
+              },
+              "runAfter": {}
+            },
+            "Approval_and_target_gate": {
+              "type": "If",
+              "expression": {
+                "and": [
+                  {
+                    "contains": [
+                      "@string(triggerBody()?['object']?['properties']?['labels'])",
+                      "RemediationApproved"
+                    ]
+                  },
+                  {
+                    "contains": [
+                      "@string(triggerBody()?['object']?['properties']?['labels'])",
+                      "TelemetryIntegrity"
+                    ]
+                  },
+                  {
+                    "equals": [
+                      "@length(body('Filter_diagnostic_setting_entities'))",
+                      1
+                    ]
+                  }
+                ]
+              },
+              "actions": {
+                "Compose_diagnostic_setting_id": {
+                  "type": "Compose",
+                  "inputs": "@first(body('Filter_diagnostic_setting_entities'))?['properties']?['resourceId']",
+                  "runAfter": {}
+                },
+                "Determine_supported_baseline": {
+                  "type": "If",
+                  "expression": {
+                    "or": [
+                      {
+                        "contains": [
+                          "@toLower(outputs('Compose_diagnostic_setting_id'))",
+                          "/providers/microsoft.keyvault/vaults/"
+                        ]
+                      },
+                      {
+                        "contains": [
+                          "@toLower(outputs('Compose_diagnostic_setting_id'))",
+                          "/providers/microsoft.storage/storageaccounts/"
+                        ]
+                      }
+                    ]
+                  },
+                  "actions": {
+                    "Restore_diagnostic_setting": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "PUT",
+                        "uri": "@{concat('https://management.azure.com', outputs('Compose_diagnostic_setting_id'), '?api-version=2021-05-01-preview')}",
+                        "headers": {
+                          "Content-Type": "application/json"
+                        },
+                        "body": "@if(contains(toLower(outputs('Compose_diagnostic_setting_id')), '/providers/microsoft.keyvault/vaults/'), json(concat('{\"properties\":{\"workspaceId\":\"', parameters('LogAnalyticsWorkspaceResourceId'), '\",\"logs\":[{\"categoryGroup\":\"audit\",\"enabled\":true}],\"metrics\":[{\"category\":\"AllMetrics\",\"enabled\":true}]}}')), json(concat('{\"properties\":{\"workspaceId\":\"', parameters('LogAnalyticsWorkspaceResourceId'), '\",\"logs\":[],\"metrics\":[{\"category\":\"Transaction\",\"enabled\":true}]}}')))",
+                        "authentication": {
+                          "type": "ManagedServiceIdentity",
+                          "audience": "https://management.azure.com/"
+                        }
+                      },
+                      "runAfter": {}
+                    },
+                    "Verify_diagnostic_setting": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "GET",
+                        "uri": "@{concat('https://management.azure.com', outputs('Compose_diagnostic_setting_id'), '?api-version=2021-05-01-preview')}",
+                        "authentication": {
+                          "type": "ManagedServiceIdentity",
+                          "audience": "https://management.azure.com/"
+                        }
+                      },
+                      "runAfter": {
+                        "Restore_diagnostic_setting": [
+                          "Succeeded"
+                        ]
+                      }
+                    },
+                    "Validate_workspace_destination": {
+                      "type": "If",
+                      "expression": {
+                        "equals": [
+                          "@toLower(body('Verify_diagnostic_setting')?['properties']?['workspaceId'])",
+                          "@toLower(parameters('LogAnalyticsWorkspaceResourceId'))"
+                        ]
+                      },
+                      "actions": {
+                        "Comment_restoration_verified": {
+                          "type": "ApiConnection",
+                          "inputs": {
+                            "body": {
+                              "incidentArmId": "@triggerBody()?['object']?['id']",
+                              "message": "<p><b>HA-ZT-003 second-stage remediation completed.</b><br><br>The diagnostic setting was restored to the approved Log Analytics workspace and the destination was verified after the PUT operation.<br><br><b>Target:</b> @{outputs('Compose_diagnostic_setting_id')}<br><b>Next:</b> Re-run diagnostic validation and confirm fresh telemetry arrives.</p>"
+                            },
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                              }
+                            },
+                            "method": "post",
+                            "path": "/Incidents/Comment"
+                          }
+                        }
+                      },
+                      "else": {
+                        "actions": {
+                          "Comment_destination_mismatch": {
+                            "type": "ApiConnection",
+                            "inputs": {
+                              "body": {
+                                "incidentArmId": "@triggerBody()?['object']?['id']",
+                                "message": "<p><b>HA-ZT-003 remediation requires review.</b><br><br>The diagnostic setting PUT completed, but post-remediation validation did not confirm the approved Log Analytics workspace destination. Review the setting before closing the incident.<br><br><b>Target:</b> @{outputs('Compose_diagnostic_setting_id')}</p>"
+                              },
+                              "host": {
+                                "connection": {
+                                  "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                }
+                              },
+                              "method": "post",
+                              "path": "/Incidents/Comment"
+                            }
+                          }
+                        }
+                      },
+                      "runAfter": {
+                        "Verify_diagnostic_setting": [
+                          "Succeeded"
+                        ]
+                      }
+                    }
+                  },
+                  "else": {
+                    "actions": {
+                      "Comment_unsupported_resource": {
+                        "type": "ApiConnection",
+                        "inputs": {
+                          "body": {
+                            "incidentArmId": "@triggerBody()?['object']?['id']",
+                            "message": "<p><b>HA-ZT-003 remediation blocked.</b><br><br>The target diagnostic setting belongs to a resource type that is not in the approved remediation baseline. This playbook only restores the Key Vault and Storage Account diagnostic patterns used by the Zero Trust reference architecture. No configuration change was made.</p>"
+                          },
+                          "host": {
+                            "connection": {
+                              "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                            }
+                          },
+                          "method": "post",
+                          "path": "/Incidents/Comment"
+                        }
+                      }
+                    }
+                  },
+                  "runAfter": {
+                    "Compose_diagnostic_setting_id": [
+                      "Succeeded"
+                    ]
+                  }
+                }
+              },
+              "else": {
+                "actions": {
+                  "Comment_gate_blocked": {
+                    "type": "ApiConnection",
+                    "inputs": {
+                      "body": {
+                        "incidentArmId": "@triggerBody()?['object']?['id']",
+                        "message": "<p><b>HA-ZT-003 remediation blocked by safety gate.</b><br><br>No diagnostic configuration was changed. Requirements: incident label <b>RemediationApproved</b>, the existing <b>TelemetryIntegrity</b> label, and exactly one AzureResource diagnostic-setting entity.<br><br>Validate the incident, add the approval label only after confirmation, then run this playbook manually again.</p>"
+                      },
+                      "host": {
+                        "connection": {
+                          "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                        }
+                      },
+                      "method": "post",
+                      "path": "/Incidents/Comment"
+                    }
+                  }
+                }
+              },
+              "runAfter": {
+                "Filter_diagnostic_setting_entities": [
+                  "Succeeded"
+                ]
+              }
+            }
+          },
+          "outputs": {}
+        },
+        "parameters": {
+          "$connections": {
+            "value": {
+              "azuresentinel": {
+                "connectionId": "[resourceId('Microsoft.Web/connections', variables('SentinelConnectionName'))]",
+                "connectionName": "[variables('SentinelConnectionName')]",
+                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]",
+                "connectionProperties": {
+                  "authentication": {
+                    "type": "ManagedServiceIdentity"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "playbookResourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Logic/workflows', parameters('PlaybookName'))]"
+    },
+    "playbookPrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Logic/workflows', parameters('PlaybookName')), '2019-05-01', 'Full').identity.principalId]"
+    }
+  }
+}
