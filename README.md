@@ -184,7 +184,7 @@ Three production-oriented analytics-rule candidates now extend the Zero Trust En
 
 Each rule includes MITRE mapping, schedule, entity mapping, tuning guidance, false positives, and response steps.
 
-**[Deploy all three with Bicep →](deploy/bicep/zero-trust-analytics/README.md)** · **[Automated response / playbooks →](deploy/playbooks/zero-trust/README.md)**
+**[Deploy all three with Bicep →](deploy/bicep/zero-trust-analytics/README.md)** · **[Automated response / playbooks →](deploy/playbooks/zero-trust/README.md)** · **[Conditional remediation →](deploy/playbooks/zero-trust/conditional-remediation/README.md)**
 
 ## How to deploy these without regretting it
 
