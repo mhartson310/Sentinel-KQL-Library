@@ -1,0 +1,30 @@
+// Zero Trust Enterprise Application
+// Detection: Privileged RBAC assignment created
+// Architecture: https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/tree/main/architecture/enterprise-application
+//
+// Purpose:
+// Surface successful Azure RBAC role-assignment creation for investigation.
+// Role name is not consistently present in AzureActivity across environments,
+// so resolve the assignment/resource and enrich during investigation or with
+// a watchlist/function in your tenant.
+//
+// Tune:
+// - Exclude approved PIM/deployment automation identities.
+// - Prioritize Owner, Contributor, User Access Administrator, and sensitive
+//   data-plane roles after enrichment.
+
+let Lookback = 1h;
+AzureActivity
+| where TimeGenerated > ago(Lookback)
+| where ActivityStatusValue in~ ("Success", "Succeeded")
+| where OperationNameValue =~ "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE"
+| project
+    TimeGenerated,
+    Caller,
+    CallerIpAddress,
+    SubscriptionId,
+    ResourceGroup,
+    ResourceId,
+    CorrelationId,
+    Properties
+| order by TimeGenerated desc
