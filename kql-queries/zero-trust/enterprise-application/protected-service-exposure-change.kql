@@ -1,0 +1,40 @@
+// Zero Trust Enterprise Application
+// Detection: Protected service exposure changed
+// Architecture: https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/tree/main/architecture/enterprise-application
+//
+// Purpose:
+// Surface successful control-plane writes to App Service, Key Vault, or Storage
+// that can change public-network exposure or related access settings.
+//
+// Tuning:
+// - Filter to production subscriptions/resource groups.
+// - Exclude approved Terraform/CI identities by object ID.
+// - Correlate with change windows before promoting to an analytics rule.
+
+let Lookback = 1h;
+AzureActivity
+| where TimeGenerated > ago(Lookback)
+| where ActivityStatusValue in~ ("Success", "Succeeded")
+| where OperationNameValue has_any (
+    "MICROSOFT.WEB/SITES/WRITE",
+    "MICROSOFT.KEYVAULT/VAULTS/WRITE",
+    "MICROSOFT.STORAGE/STORAGEACCOUNTS/WRITE"
+)
+| extend ResourceType = case(
+    OperationNameValue has "MICROSOFT.WEB/SITES", "App Service",
+    OperationNameValue has "MICROSOFT.KEYVAULT/VAULTS", "Key Vault",
+    OperationNameValue has "MICROSOFT.STORAGE/STORAGEACCOUNTS", "Storage Account",
+    "Other"
+)
+| project
+    TimeGenerated,
+    ResourceType,
+    Caller,
+    CallerIpAddress,
+    SubscriptionId,
+    ResourceGroup,
+    ResourceId,
+    OperationNameValue,
+    CorrelationId,
+    Properties
+| order by TimeGenerated desc
