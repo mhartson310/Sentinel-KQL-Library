@@ -11,6 +11,21 @@
 - Sentinel automation rules and Logic Apps playbooks;
 - approval-gated SOAR remediation and validation patterns.
 
+## Engineering proof and review path
+
+**Problem → Architecture → Trust boundaries → Threats → Controls → Deployment → Validation → Monitoring**
+
+| Review question | Evidence |
+|---|---|
+| What problem does the detection address? | [Detection rules and investigation guidance](rules) |
+| What architecture does it protect? | [Zero Trust reference architecture](https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures) |
+| What does deployable analytics look like? | [Bicep Scheduled analytics rules](deploy/bicep/zero-trust-analytics/README.md) |
+| How is incident response automated? | [Triage playbooks](deploy/playbooks/zero-trust/README.md) |
+| How are risky actions controlled? | [Conditional-remediation decision model](deploy/playbooks/zero-trust/conditional-remediation/decision-model.md) |
+| What is the Azure validation plan? | [End-to-end validation runbook](https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/blob/main/docs/validation/zero-trust-end-to-end-runbook.md) |
+
+**Validation boundary:** CI and template presence establish a reviewable deployment path; live detection fidelity, permission gates, and remediation success require an Azure test run.
+
 Here is one. This is the whole thing — no signup, no "request access," no truncated preview.
 
 ---
