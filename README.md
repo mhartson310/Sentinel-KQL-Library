@@ -2,6 +2,15 @@
 
 **Microsoft Sentinel detection rules that ship with the tuning notes.**
 
+## What this demonstrates
+
+- detection engineering in KQL across identity, posture, endpoint, data, and AI-security scenarios;
+- practical tuning guidance, prerequisites, false-positive handling, and response steps;
+- architecture-linked detections for Azure Zero Trust and secure AI workloads;
+- deployable Scheduled analytics rules in Bicep;
+- Sentinel automation rules and Logic Apps playbooks;
+- approval-gated SOAR remediation and validation patterns.
+
 Here is one. This is the whole thing — no signup, no "request access," no truncated preview.
 
 ---
