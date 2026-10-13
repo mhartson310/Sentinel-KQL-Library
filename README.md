@@ -6,6 +6,10 @@
 
 [Explore the SOC architecture decision guide](docs/decision-framework/README.md): Defender XDR vs Sentinel vs both, ingestion cost vs coverage, automated triage vs constrained remediation, and migration cutover strategies. The guide documents business baselines, trade-offs, operational acceptance, and evidence requirements using the [shared decision framework](https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/tree/main/docs/decision-framework/architecture-decision-framework).
 
+## Leadership decision documents
+
+The [executive decision brief](docs/executive-decision-brief.md) frames a decision about Sentinel, Defender XDR, or an integrated operating model in terms of the ask, urgency, expense, cost of inaction, and next action. It proposes a measured pilot—not an approved rollout, measured MTTR benefit, or permission for destructive automation.
+
 ## What this demonstrates
 
 - detection engineering in KQL across identity, posture, endpoint, data, and AI-security scenarios;
