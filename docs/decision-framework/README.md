@@ -4,6 +4,8 @@
 
 Use the [reusable framework](https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/tree/main/docs/decision-framework/architecture-decision-framework), [ADR template](https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/tree/main/docs/decision-framework/architecture-decision-framework/ADR-template.md), and [business-case template](https://github.com/mhartson310/Azure-Zero-Trust-Reference-Architectures/tree/main/docs/decision-framework/architecture-decision-framework/business-case-template.md).
 
+[Executive decision brief](../executive-decision-brief.md) ·
+
 ## Business objective
 
 Reduce material detection gaps and improve incident triage without creating unsustainable alert volume, uncontrolled remediation or unbounded telemetry costs.
